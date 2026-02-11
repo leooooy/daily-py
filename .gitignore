@@ -1,0 +1,45 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+.eggs/
+.tox/
+.nox/
+*.egg
+*.whl
+*.deb
+*.rpm
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+
+# Pytest
+.pytest_cache/
+
+# IDEs / editors
+.idea/
+.vscode/
+.DS_Store
+*.log
+
+# Logs
+logs/
+*.log
+
+# OS specific
+.build/
+.coverage
