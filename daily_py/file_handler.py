@@ -12,7 +12,7 @@ import tarfile
 import time
 import logging
 from pathlib import Path
-from typing import List, Optional, Union, Dict, Any
+from typing import List, Optional, Union, Dict, Any, Tuple
 
 
 class FileHandler:
@@ -207,3 +207,111 @@ class FileHandler:
                         renamed += 1
                         self.logger.info(f"重命名: {old_name} -> {new_name}")
         return renamed
+
+    def batch_rename_recursive(self, directory: Union[str, Path], pattern: str, replacement: str,
+                               use_regex: bool = False, include_dirs: bool = False,
+                               dry_run: bool = False) -> Dict[str, Any]:
+        """递归批量重命名：支持仅文件或同时对文件及目录进行重命名。
+
+        参数:
+          - directory: 起始目录
+          - pattern: 替换模式
+          - replacement: 替换文本
+          - use_regex: 是否将 pattern 视为正则表达式
+          - include_dirs: 是否对目录名也应用同样的规则
+          - dry_run: 仅预览，不实际修改
+        返回:
+          字典，包含 renamed、skipped、errors 以及计数
+        """
+        import re
+        base = self._resolve(directory)
+        result: Dict[str, Any] = {
+            "renamed": [],
+            "skipped": [],
+            "errors": [],
+            "count_renamed": 0,
+            "count_skipped": 0,
+            "count_errors": 0,
+        }
+
+        def _apply(n: str) -> str:
+            if use_regex:
+                return re.sub(pattern, replacement, n)
+            else:
+                return n.replace(pattern, replacement)
+
+        try:
+            if include_dirs:
+                # 1) 重命名文件名（递归，深度优先）
+                file_ops: List[Tuple[Path, Path]] = []  # list of (old_path, new_path)
+                for p in base.rglob("*"):
+                    if p.is_file():
+                        new_name = _apply(p.name)
+                        if new_name != p.name:
+                            new_path = p.parent / new_name
+                            file_ops.append((p, new_path))
+                file_ops.sort(key=lambda t: len(t[0].parts), reverse=True)
+                for old, new in file_ops:
+                    if not old.exists():
+                        result["skipped"].append({"path": str(old), "reason": "源文件不存在"})
+                        result["count_skipped"] += 1
+                        continue
+                    if new.exists():
+                        result["skipped"].append({"path": str(old), "reason": "目标已存在"})
+                        result["count_skipped"] += 1
+                        continue
+                    if not dry_run:
+                        old.rename(new)
+                    result["renamed"].append({"old_path": str(old), "new_path": str(new)})
+                    result["count_renamed"] += 1
+
+                # 2) 重命名目录名（自下而上）
+                dir_ops: List[Tuple[Path, Path]] = []  # list of (old_dir, new_dir)
+                for d in base.rglob("*"):
+                    if d.is_dir():
+                        rel = d.relative_to(base)
+                        new_parts = [_apply(part) for part in rel.parts]
+                        new_dir = base.joinpath(*new_parts)
+                        if new_dir != d:
+                            dir_ops.append((d, new_dir))
+                dir_ops.sort(key=lambda t: len(t[0].parts), reverse=True)
+                for old, new in dir_ops:
+                    if not old.exists():
+                        result["skipped"].append({"path": str(old), "reason": "源目录不存在"})
+                        result["count_skipped"] += 1
+                        continue
+                    if new.exists():
+                        result["skipped"].append({"path": str(old), "reason": "目标目录已存在"})
+                        result["count_skipped"] += 1
+                        continue
+                    if not dry_run:
+                        old.rename(new)
+                    result["renamed"].append({"old_path": str(old), "new_path": str(new)})
+                    result["count_renamed"] += 1
+            else:
+                # 仅对文件名进行递归重命名
+                file_ops = []
+                for p in base.rglob("*"):
+                    if p.is_file():
+                        new_name = _apply(p.name)
+                        if new_name != p.name:
+                            new_path = p.parent / new_name
+                            file_ops.append((p, new_path))
+                file_ops.sort(key=lambda t: len(t[0].parts), reverse=True)
+                for old, new in file_ops:
+                    if not old.exists():
+                        result["skipped"].append({"path": str(old), "reason": "源文件不存在"})
+                        result["count_skipped"] += 1
+                        continue
+                    if new.exists():
+                        result["skipped"].append({"path": str(old), "reason": "目标已存在"})
+                        result["count_skipped"] += 1
+                        continue
+                    if not dry_run:
+                        old.rename(new)
+                    result["renamed"].append({"old_path": str(old), "new_path": str(new)})
+                    result["count_renamed"] += 1
+        except Exception as e:
+            result["errors"].append({"error": str(e)})
+            result["count_errors"] += 1
+        return result

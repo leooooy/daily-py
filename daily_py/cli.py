@@ -68,10 +68,20 @@ def main() -> int:
     br.add_argument("--replacement", required=True, help="替换文本")
     br.add_argument("--use-regex", action="store_true", help="是否使用正则表达式")
 
+    # rename-recursive
+    rr = sub.add_parser("rename-recursive", help="递归批量重命名（可选包含目录名）")
+    rr.add_argument("--directory", required=True, help="起始目录")
+    rr.add_argument("--pattern", required=True, help="替换模式（文本或正则）")
+    rr.add_argument("--replacement", required=True, help="替换文本")
+    rr.add_argument("--use-regex", action="store_true", help="是否将 pattern 视为正则表达式")
+    rr.add_argument("--include-dirs", action="store_true", help="是否对目录名也应用重命名")
+    rr.add_argument("--dry-run", action="store_true", help="仅预览，不执行重命名")
+
     args = parser.parse_args()
     fh = FileHandler()
 
     try:
+        import json
         if args.cmd == "delete":
             print(fh.delete_file(args.path))
         elif args.cmd == "rename":
@@ -99,6 +109,16 @@ def main() -> int:
         elif args.cmd == "batch-rename":
             renamed = fh.batch_rename(args.directory, args.pattern, args.replacement, use_regex=args.use_regex)
             print(renamed)
+        elif args.cmd == "rename-recursive":
+            res = fh.batch_rename_recursive(
+                args.directory,
+                args.pattern,
+                args.replacement,
+                use_regex=args.use_regex,
+                include_dirs=args.include_dirs,
+                dry_run=args.dry_run,
+            )
+            print(json.dumps(res, ensure_ascii=False, indent=2))
         else:
             parser.print_help()
             return 2

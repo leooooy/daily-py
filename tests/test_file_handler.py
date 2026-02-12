@@ -51,3 +51,26 @@ class TestFileHandler:
         assert len(files) == 2
         info = fh.get_file_info(tmpdir / "f1.txt")
         assert info["name"] == "f1.txt"
+    
+    def test_batch_rename_recursive_files_only(self, fh: FileHandler, tmpdir: Path):
+        sub = tmpdir / "sub"
+        sub.mkdir()
+        old = sub / "oldname.txt"
+        old.write_text("content", encoding="utf-8")
+        res = fh.batch_rename_recursive(tmpdir, "old", "new", include_dirs=False, dry_run=False)
+        new_path = sub / "newname.txt"
+        assert new_path.exists()
+        assert not old.exists()
+        assert res["count_renamed"] >= 1
+
+    def test_batch_rename_recursive_with_dirs(self, fh: FileHandler, tmpdir: Path):
+        dir_old = tmpdir / "dir_old"
+        dir_old.mkdir()
+        inner = dir_old / "inner_old.txt"
+        inner.write_text("x", encoding="utf-8")
+        res = fh.batch_rename_recursive(tmpdir, "old", "new", include_dirs=True, dry_run=False)
+        dir_new = tmpdir / "dir_new"
+        inner_new = dir_new / "inner_new.txt"
+        assert inner_new.exists()
+        assert inner.exists() is False
+        assert dir_new.exists()

@@ -12,4 +12,11 @@ try:
     __all__ = ["FileHandler"]
 except Exception:
     # 在打包或导入阶段可能尚未生成文件时不阻塞导入
-    __all__ = []
+    __all__ = ["ImageHandler"] if 'ImageHandler' in globals() else []
+
+# 兼容地导出 ImageHandler（若 image_handler 模块存在）
+try:
+    from .image_handler import ImageHandler  # type: ignore
+    __all__.append("ImageHandler")
+except Exception:
+    pass

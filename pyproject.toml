@@ -46,6 +46,9 @@ testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
  
 [project.scripts]
 dailypy = "daily_py.cli:main"
