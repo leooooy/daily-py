@@ -1,0 +1,15 @@
+Windows Registry Editor Version 5.00
+
+; Right-click context menu to run DailyPy batch rename on a directory
+[HKEY_CLASSES_ROOT\Directory\shell\DailyPyRename]
+@="DailyPy Rename"
+
+[HKEY_CLASSES_ROOT\Directory\shell\DailyPyRename\command]
+@="\"C:\\Windows\\System32\\cmd.exe\" /c \""C:\\path\\to\\DailyPy\\tools\\rename_batch.bat\" \"%1\"\""
+
+; Context menu for Directory Background (when right-click on empty space in a directory)
+[HKEY_CLASSES_ROOT\Directory\Background\shell\DailyPyRename]
+@="DailyPy Rename"
+
+[HKEY_CLASSES_ROOT\Directory\Background\shell\DailyPyRename\command]
+@="\"C:\\Windows\\System32\\cmd.exe\" /c \""C:\\path\\to\\DailyPy\\tools\\rename_batch.bat\" \"%V\"\""
