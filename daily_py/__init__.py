@@ -20,3 +20,22 @@ try:
     __all__.append("ImageHandler")
 except Exception:
     pass
+
+# 导出 db 模块公共类（依赖 mysql-connector-python，缺失时跳过）
+try:
+    from .db import DBConnection, BaseRepository, MediaVideo, MediaVideoRepository, create_connection, ENVS  # type: ignore
+    __all__ += ["DBConnection", "BaseRepository", "MediaVideo", "MediaVideoRepository", "create_connection", "ENVS"]
+except Exception:
+    pass
+
+try:
+    from .s3 import S3Uploader, create_uploader  # type: ignore
+    __all__ += ["S3Uploader", "create_uploader"]
+except Exception:
+    pass
+
+try:
+    from .media_video_uploader import MediaVideoUploader, UploadResult  # type: ignore
+    __all__ += ["MediaVideoUploader", "UploadResult"]
+except Exception:
+    pass

@@ -43,3 +43,7 @@ logs/
 # OS specific
 .build/
 .coverage
+
+# Credentials — do not commit
+daily_py/db/config.py
+daily_py/s3/config.py

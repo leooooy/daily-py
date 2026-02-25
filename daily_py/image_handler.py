@@ -10,9 +10,14 @@ from pathlib import Path
 from typing import Optional, Tuple, Union, Dict, Any
 import logging
 
-from PIL import Image
+from PIL import Image, ExifTags
 import subprocess
 import shutil
+
+# Windows：隐藏控制台窗口，防止子进程弹窗或因管道阻塞卡死
+_SUBPROCESS_FLAGS: dict = {}
+if hasattr(subprocess, "CREATE_NO_WINDOW"):
+    _SUBPROCESS_FLAGS["creationflags"] = subprocess.CREATE_NO_WINDOW
 try:
     import cv2  # type: ignore
     HAS_CV2 = True
@@ -77,11 +82,16 @@ class ImageHandler:
             out = Path(output_path) if output_path else video_p.with_suffix(".png")
             out.parent.mkdir(parents=True, exist_ok=True)
             # 构造 FFmpeg 命令：截取时间点帧，输出为 PNG
-            cmd = [self._ffmpeg_path, "-ss", str(time_sec), "-i", str(video_p), "-frames:v", "1", "-f", "image2", str(out)]
+            cmd = [self._ffmpeg_path, "-y", "-ss", str(time_sec), "-i", str(video_p), "-frames:v", "1", "-f", "image2", str(out)]
             self.logger.info(f"使用 FFmpeg 提取帧: {cmd}")
-            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            if res.returncode != 0:
-                raise RuntimeError(f"FFmpeg 提取帧失败: {res.stderr}")
+            res = subprocess.run(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                **_SUBPROCESS_FLAGS,
+            )
+            if res.returncode != 0 or not out.exists():
+                raise RuntimeError(f"FFmpeg 提取帧失败（returncode={res.returncode}）")
             self.logger.info(f"已从视频 {video_p} 在 {time_sec}s 处截取帧并保存到 {out}")
             return out
         else:
@@ -99,7 +109,67 @@ class ImageHandler:
             return output
 
 
-    # 3) 缩放图片，支持保持纵横比并填充
+    # 3) 获取视频时长（秒）
+    def get_video_duration(self, video_path: Union[str, Path]) -> float:
+        """获取视频时长（秒）。
+
+        后端优先级：ffprobe → moviepy → cv2。
+
+        Returns:
+            时长（秒，浮点数）。
+        Raises:
+            FileNotFoundError: 视频文件不存在。
+            RuntimeError: 三种后端均不可用。
+        """
+        video_p = self._resolve(video_path)
+        if not video_p.exists():
+            raise FileNotFoundError(f"视频不存在: {video_p}")
+
+        # ① ffprobe（最轻量，不需要加载整个视频）
+        ffprobe = shutil.which("ffprobe") or shutil.which("ffprobe.exe")
+        if ffprobe:
+            cmd = [
+                ffprobe, "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                str(video_p),
+            ]
+            res = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                errors="replace",
+                **_SUBPROCESS_FLAGS,
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                try:
+                    return float(res.stdout.strip())
+                except ValueError:
+                    pass
+
+        # ② moviepy
+        if HAS_MOVIEPY:
+            clip = VideoFileClip(str(video_p))
+            dur = float(clip.duration)
+            clip.close()
+            return dur
+
+        # ③ cv2
+        if HAS_CV2:
+            import cv2 as _cv2
+            cap = _cv2.VideoCapture(str(video_p))
+            fps = cap.get(_cv2.CAP_PROP_FPS)
+            frames = cap.get(_cv2.CAP_PROP_FRAME_COUNT)
+            cap.release()
+            if fps > 0:
+                return frames / fps
+
+        raise RuntimeError(
+            f"无法获取视频时长 {video_p}，请安装 ffprobe、moviepy 或 cv2"
+        )
+
+    # 4) 缩放图片，支持保持纵横比并填充
     def resize_image(self, input_path: Union[str, Path], output_path: Union[str, Path], size: Union[Tuple[int, int], int],
                      keep_aspect: bool = True, fill_color: Tuple[int, int, int] = (255, 255, 255)) -> Path:
         in_p = self._resolve(input_path)
@@ -174,6 +244,75 @@ class ImageHandler:
         out_p.parent.mkdir(parents=True, exist_ok=True)
         _cv2.imwrite(str(out_p), dst)
         self.logger.info(f"已去水印：{in_p} -> {out_p}")
+        return out_p
+
+    # 7) 读取 EXIF 元数据
+    def get_exif(self, image_path: Union[str, Path]) -> Dict[str, Any]:
+        """读取图片的 EXIF 元数据，返回 {标签名: 值} 字典。若图片无 EXIF 则返回空字典。"""
+        p = self._resolve(image_path)
+        if not p.exists():
+            raise FileNotFoundError(f"图片不存在: {p}")
+        with Image.open(p) as img:
+            raw_exif = img.getexif()
+            result: Dict[str, Any] = {}
+            for tag_id, value in raw_exif.items():
+                tag_name = ExifTags.TAGS.get(tag_id, str(tag_id))
+                if isinstance(value, bytes):
+                    try:
+                        value = value.decode("utf-8", errors="replace")
+                    except Exception:
+                        value = repr(value)
+                result[tag_name] = value
+        self.logger.info(f"读取 EXIF：{p}，共 {len(result)} 个标签")
+        return result
+
+    # 8) 清除 EXIF 元数据
+    def clear_exif(self, input_path: Union[str, Path], output_path: Optional[Union[str, Path]] = None) -> Path:
+        """清除图片所有 EXIF 元数据，默认输出为 *_noexif.* 文件。"""
+        in_p = self._resolve(input_path)
+        if not in_p.exists():
+            raise FileNotFoundError(f"图片不存在: {in_p}")
+        out_p = self._resolve(output_path) if output_path else in_p.parent / (in_p.stem + "_noexif" + in_p.suffix)
+        out_p.parent.mkdir(parents=True, exist_ok=True)
+        with Image.open(in_p) as img:
+            fmt = img.format or out_p.suffix.lstrip(".").upper() or "JPEG"
+            img.save(out_p, format=fmt, exif=b"")
+        self.logger.info(f"已清除 EXIF：{in_p} -> {out_p}")
+        return out_p
+
+    # 9) 写入/更新 EXIF 元数据
+    def set_exif(self, input_path: Union[str, Path], tags: Dict[str, Any], output_path: Optional[Union[str, Path]] = None) -> Path:
+        """更新图片 EXIF 标签。tags 为 {标签名或标签ID: 值} 字典。
+        支持常用标签名如 'DateTime'、'Artist'、'Copyright'、'ImageDescription'。
+        需要安装 piexif：pip install piexif
+        """
+        try:
+            import piexif  # type: ignore
+        except ImportError:
+            raise ImportError("set_exif 需要 piexif 库，请执行: pip install piexif")
+        in_p = self._resolve(input_path)
+        if not in_p.exists():
+            raise FileNotFoundError(f"图片不存在: {in_p}")
+        out_p = self._resolve(output_path) if output_path else in_p.parent / (in_p.stem + "_exif" + in_p.suffix)
+        out_p.parent.mkdir(parents=True, exist_ok=True)
+
+        name_to_id = {v: k for k, v in ExifTags.TAGS.items()}
+        try:
+            exif_dict = piexif.load(str(in_p))
+        except Exception:
+            exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "1st": {}}
+
+        for tag_key, value in tags.items():
+            tag_id = name_to_id.get(tag_key, tag_key) if isinstance(tag_key, str) else tag_key
+            if isinstance(value, str):
+                value = value.encode("utf-8")
+            exif_dict["0th"][tag_id] = value
+
+        exif_bytes = piexif.dump(exif_dict)
+        with Image.open(in_p) as img:
+            fmt = img.format or out_p.suffix.lstrip(".").upper() or "JPEG"
+            img.save(out_p, format=fmt, exif=exif_bytes)
+        self.logger.info(f"已更新 EXIF 标签 {list(tags.keys())}：{in_p} -> {out_p}")
         return out_p
 
     # 6) 转换格式
