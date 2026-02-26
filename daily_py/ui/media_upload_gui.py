@@ -130,12 +130,20 @@ class MediaUploadApp:
         # ---- DB 字段 ----
         ttk.Label(frm, text="type:").grid(row=row, column=0, sticky="w", pady=2)
         self.type_var = tk.StringVar(value="0")
-        ttk.Entry(frm, textvariable=self.type_var, width=10).grid(row=row, column=1, sticky="w", pady=2)
+        ttk.Combobox(
+            frm, textvariable=self.type_var,
+            values=["0: 普通视频", "1: VR视频"],
+            state="readonly", width=14,
+        ).grid(row=row, column=1, sticky="w", pady=2)
         row += 1
 
         ttk.Label(frm, text="service_level_limits:").grid(row=row, column=0, sticky="w", pady=2)
         self.sll_var = tk.StringVar(value="0")
-        ttk.Entry(frm, textvariable=self.sll_var, width=10).grid(row=row, column=1, sticky="w", pady=2)
+        ttk.Combobox(
+            frm, textvariable=self.sll_var,
+            values=["0", "1", "2", "3"],
+            state="readonly", width=14,
+        ).grid(row=row, column=1, sticky="w", pady=2)
         row += 1
 
         ttk.Label(frm, text="common (空 = NULL):").grid(row=row, column=0, sticky="w", pady=2)
@@ -213,7 +221,7 @@ class MediaUploadApp:
 
         try:
             cover_time    = float(self.cover_time_var.get())
-            default_type  = int(self.type_var.get())
+            default_type  = int(self.type_var.get().split(":")[0])
             sll           = int(self.sll_var.get())
             common_str    = self.common_var.get().strip()
             common: Optional[int] = int(common_str) if common_str else None

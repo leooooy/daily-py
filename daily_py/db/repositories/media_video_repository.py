@@ -1,6 +1,6 @@
 """MediaVideo 业务仓库。"""
 
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from ..base_repository import BaseRepository
 from ..models.media_video import MediaVideo
@@ -60,6 +60,35 @@ class MediaVideoRepository(BaseRepository[MediaVideo]):
             where="type = %s AND deleted_flag = %s",
             params=(video_type, 1),
             order_by="show_order ASC",
+        )
+
+    def find_all_admin(
+        self,
+        page: int = 1,
+        page_size: int = 50,
+        deleted_flag: Optional[int] = None,
+        video_type: Optional[int] = None,
+        name_keyword: str = "",
+    ) -> Tuple[List[MediaVideo], int]:
+        """管理员全量分页查询，支持按删除状态、类型、名称关键词过滤，按 id 降序。"""
+        conditions = []
+        params: list = []
+        if deleted_flag is not None:
+            conditions.append("deleted_flag = %s")
+            params.append(deleted_flag)
+        if video_type is not None:
+            conditions.append("type = %s")
+            params.append(video_type)
+        if name_keyword:
+            conditions.append("media_name LIKE %s")
+            params.append(f"%{name_keyword}%")
+        where = " AND ".join(conditions) if conditions else None
+        return self.find_page(
+            page=page,
+            page_size=page_size,
+            where=where,
+            params=tuple(params) if params else None,
+            order_by="id DESC",
         )
 
     def increment_click(self, video_id: int) -> int:
