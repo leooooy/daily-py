@@ -10,14 +10,18 @@ try:
     from .connection import DBConnection
     from .base_repository import BaseRepository
     from .models.media_video import MediaVideo
+    from .models.toy_model_video import ToyModelVideo
     from .repositories.media_video_repository import MediaVideoRepository
+    from .repositories.toy_model_video_repository import ToyModelVideoRepository
     from .config import create_connection, ENVS
 
     __all__ = [
         "DBConnection",
         "BaseRepository",
         "MediaVideo",
+        "ToyModelVideo",
         "MediaVideoRepository",
+        "ToyModelVideoRepository",
         "create_connection",
         "ENVS",
     ]

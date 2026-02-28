@@ -109,14 +109,14 @@ class ImageHandler:
             return output
 
 
-    # 3) 获取视频时长（秒）
+    # 3) 获取视频时长（毫秒）
     def get_video_duration(self, video_path: Union[str, Path]) -> float:
-        """获取视频时长（秒）。
+        """获取视频时长（毫秒）。
 
         后端优先级：ffprobe → moviepy → cv2。
 
         Returns:
-            时长（秒，浮点数）。
+            时长（毫秒，浮点数）。
         Raises:
             FileNotFoundError: 视频文件不存在。
             RuntimeError: 三种后端均不可用。
@@ -144,30 +144,133 @@ class ImageHandler:
             )
             if res.returncode == 0 and res.stdout.strip():
                 try:
-                    return float(res.stdout.strip())
-                except ValueError:
+                    # 解析 "123.456789" 秒字符串 → 直接组合整数毫秒，避免浮点乘法
+                    s = res.stdout.strip()
+                    int_part, _, frac_part = s.partition(".")
+                    ms = int(int_part) * 1000 + int((frac_part + "000")[:3])
+                    return float(ms)
+                except (ValueError, IndexError):
                     pass
 
-        # ② moviepy
+        # ② moviepy（无原生 ms API，round 取整避免浮点误差）
         if HAS_MOVIEPY:
             clip = VideoFileClip(str(video_p))
-            dur = float(clip.duration)
+            ms = round(clip.duration * 1000)
             clip.close()
-            return dur
+            return float(ms)
 
-        # ③ cv2
+        # ③ cv2 — 跳到末尾，直接读 CAP_PROP_POS_MSEC（原生毫秒）
         if HAS_CV2:
             import cv2 as _cv2
             cap = _cv2.VideoCapture(str(video_p))
-            fps = cap.get(_cv2.CAP_PROP_FPS)
-            frames = cap.get(_cv2.CAP_PROP_FRAME_COUNT)
+            cap.set(_cv2.CAP_PROP_POS_AVI_RATIO, 1.0)
+            ms = cap.get(_cv2.CAP_PROP_POS_MSEC)
             cap.release()
-            if fps > 0:
-                return frames / fps
+            if ms > 0:
+                return ms
 
         raise RuntimeError(
             f"无法获取视频时长 {video_p}，请安装 ffprobe、moviepy 或 cv2"
         )
+
+    # 4a) 获取视频宽高
+    def get_video_size(self, video_path: Union[str, Path]) -> Tuple[int, int]:
+        """获取视频宽高（像素）。
+
+        优先使用 ffprobe，回退到 cv2。
+
+        Returns:
+            (width, height)
+        Raises:
+            FileNotFoundError: 视频文件不存在。
+            RuntimeError: 所有后端均不可用。
+        """
+        video_p = self._resolve(video_path)
+        if not video_p.exists():
+            raise FileNotFoundError(f"视频不存在: {video_p}")
+
+        ffprobe = shutil.which("ffprobe") or shutil.which("ffprobe.exe")
+        if ffprobe:
+            cmd = [
+                ffprobe, "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=width,height",
+                "-of", "csv=p=0",
+                str(video_p),
+            ]
+            res = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                text=True, errors="replace",
+                **_SUBPROCESS_FLAGS,
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                parts = res.stdout.strip().split(",")
+                if len(parts) >= 2:
+                    try:
+                        return int(parts[0]), int(parts[1])
+                    except ValueError:
+                        pass
+
+        if HAS_CV2:
+            import cv2 as _cv2
+            cap = _cv2.VideoCapture(str(video_p))
+            w = int(cap.get(_cv2.CAP_PROP_FRAME_WIDTH))
+            h = int(cap.get(_cv2.CAP_PROP_FRAME_HEIGHT))
+            cap.release()
+            if w > 0 and h > 0:
+                return w, h
+
+        raise RuntimeError(f"无法获取视频尺寸 {video_p}，请安装 ffprobe 或 cv2")
+
+    # 4b) 修复视频宽高奇数尺寸（H.264 要求偶数）
+    def ensure_even_dimensions(self, video_path: Union[str, Path]) -> bool:
+        """若视频宽或高为奇数，使用 ffmpeg crop 裁剪为偶数并原地覆盖。
+
+        H.264/H.265 编码要求宽高均为偶数；奇数尺寸会导致部分播放器或上传平台报错。
+        crop 滤镜 ``trunc(iw/2)*2:trunc(ih/2)*2`` 最多裁去各边 1 像素，画质无损失。
+
+        Returns:
+            True 表示文件已被修改，False 表示无需修改（宽高均已为偶数）。
+        Raises:
+            RuntimeError: ffmpeg 不可用，或转码失败。
+        """
+        video_p = self._resolve(video_path)
+        w, h = self.get_video_size(video_p)
+        if w % 2 == 0 and h % 2 == 0:
+            return False
+
+        if not self.ffmpeg_available:
+            raise RuntimeError(
+                f"视频 {video_p.name} 尺寸含奇数（{w}x{h}），但 ffmpeg 不可用，无法自动修复"
+            )
+
+        self.logger.info("视频尺寸含奇数（%dx%d），使用 ffmpeg 裁剪为偶数: %s", w, h, video_p.name)
+        tmp = video_p.with_name(video_p.stem + "_even_tmp" + video_p.suffix)
+        cmd = [
+            self._ffmpeg_path, "-y",
+            "-i", str(video_p),
+            "-vf", "crop=trunc(iw/2)*2:trunc(ih/2)*2",
+            "-c:a", "copy",
+            str(tmp),
+        ]
+        res = subprocess.run(
+            cmd,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            **_SUBPROCESS_FLAGS,
+        )
+        if res.returncode != 0 or not tmp.exists():
+            if tmp.exists():
+                tmp.unlink()
+            raise RuntimeError(
+                f"ffmpeg 裁剪奇数尺寸失败（returncode={res.returncode}）: {video_p.name}"
+            )
+
+        new_w = w - w % 2
+        new_h = h - h % 2
+        tmp.replace(video_p)
+        self.logger.info("已修复奇数尺寸 %dx%d → %dx%d: %s", w, h, new_w, new_h, video_p.name)
+        return True
 
     # 4) 缩放图片，支持保持纵横比并填充
     def resize_image(self, input_path: Union[str, Path], output_path: Union[str, Path], size: Union[Tuple[int, int], int],

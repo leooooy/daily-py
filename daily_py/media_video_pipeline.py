@@ -27,6 +27,7 @@ import logging
 import sys
 from typing import List, Optional
 
+
 from .media_video_uploader import MediaVideoUploader, UploadResult
 
 
@@ -74,14 +75,16 @@ class MediaVideoPipeline:
         video_prefix: str = "media_video",
         json_prefix: str = "media_instruct",
         cover_prefix: str = "media_cover",
-        cover_time_sec: float = 1.0,
+        cover_time_sec: Optional[float] = 1.0,
         default_type: int = 0,
         default_show_status: int = 1,
         default_service_level_limits: int = 0,
         default_common: Optional[int] = None,
+        toy_models: Optional[List[str]] = None,
     ) -> None:
         _setup_logging()
         self._env = env
+        self._toy_models = toy_models or []
         self._uploader_kwargs = dict(
             video_prefix=video_prefix,
             json_prefix=json_prefix,
@@ -141,7 +144,17 @@ class MediaVideoPipeline:
         ih = ImageHandler()
         repo = MediaVideoRepository(db)
 
-        uploader = MediaVideoUploader(repo, s3, ih, **self._uploader_kwargs)
+        toy_model_repo = None
+        if self._toy_models:
+            from .db.repositories.toy_model_video_repository import ToyModelVideoRepository
+            toy_model_repo = ToyModelVideoRepository(db)
+
+        uploader = MediaVideoUploader(
+            repo, s3, ih,
+            toy_model_repo=toy_model_repo,
+            toy_models=self._toy_models,
+            **self._uploader_kwargs,
+        )
 
         # 执行上传
         results = uploader.upload_folder(folder, recursive=recursive, dry_run=dry_run)

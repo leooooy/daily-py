@@ -276,7 +276,7 @@ class MediaVideoManageApp:
     def _open_upload(self) -> None:
         from daily_py.ui.media_upload_gui import MediaUploadApp
         win = tk.Toplevel(self.master)
-        MediaUploadApp(win)
+        MediaUploadApp(win, initial_env=self.env_var.get())
 
     # ------------------------------------------------------------------
     # 右键复制

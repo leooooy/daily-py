@@ -14,7 +14,13 @@ import sys
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
-from typing import Optional
+from typing import List, Optional
+
+_TOY_MODELS: List[str] = [
+    "LLSLA0208", "AC07A", "LG389", "DG-D11E", "CBW02",
+    "CB-WXW02", "CB-WXA02", "CB-WXA01", "B4-YY974",
+    "AFS-R09", "LLSLA0208B", "LLYS091", "LY199B01",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -49,7 +55,7 @@ class _StdoutToQueue:
 # ---------------------------------------------------------------------------
 
 class MediaUploadApp:
-    def __init__(self, master: tk.Tk) -> None:
+    def __init__(self, master: tk.Tk, initial_env: str = "test") -> None:
         self.master = master
         master.title("DailyPy - 媒体视频上传")
         master.resizable(True, True)
@@ -57,6 +63,9 @@ class MediaUploadApp:
         self._log_queue: queue.Queue = queue.Queue()
         self._running = False
         self._build_ui()
+        if initial_env != "test":
+            self.env_var.set(initial_env)
+            self._on_env_changed()
         self._poll_log()
 
     # ------------------------------------------------------------------
@@ -87,19 +96,32 @@ class MediaUploadApp:
         # ---- 环境 ----
         ttk.Label(frm, text="环境:").grid(row=row, column=0, sticky="w", pady=3)
         self.env_var = tk.StringVar(value="test")
-        ttk.Combobox(
+        env_cb = ttk.Combobox(
             frm, textvariable=self.env_var, values=["test", "prod"],
             state="readonly", width=10,
-        ).grid(row=row, column=1, sticky="w", pady=3)
+        )
+        env_cb.grid(row=row, column=1, sticky="w", pady=3)
+        env_cb.bind("<<ComboboxSelected>>", lambda e: self._on_env_changed())
         row += 1
 
         # ---- 复选项 ----
         opts = ttk.Frame(frm)
         opts.grid(row=row, column=0, columnspan=2, sticky="w", pady=3)
         self.recursive_var = tk.BooleanVar(value=False)
-        self.dry_run_var = tk.BooleanVar(value=True)
+        self.dry_run_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(opts, text="递归子目录", variable=self.recursive_var).pack(side="left", padx=(0, 20))
         ttk.Checkbutton(opts, text="试运行 (Dry-run)", variable=self.dry_run_var).pack(side="left")
+        row += 1
+
+        # ---- 清空历史数据（仅 test 环境）----
+        self.clear_history_var = tk.BooleanVar(value=False)
+        self.clear_history_row = ttk.Frame(frm)
+        self.clear_history_row.grid(row=row, column=0, columnspan=2, sticky="w", pady=2)
+        ttk.Checkbutton(
+            self.clear_history_row,
+            text="上传前清空历史数据（将所有 deleted_flag 置为 -1）",
+            variable=self.clear_history_var,
+        ).pack(side="left")
         row += 1
 
         ttk.Separator(frm, orient="horizontal").grid(
@@ -109,9 +131,9 @@ class MediaUploadApp:
 
         # ---- S3 前缀 ----
         for label, attr, default in [
-            ("视频前缀:",  "video_prefix_var",  "media_video"),
-            ("JSON 前缀:", "json_prefix_var",   "media_instruct"),
-            ("封面前缀:",  "cover_prefix_var",  "media_cover"),
+            ("视频前缀:",  "video_prefix_var",  "media_video/test"),
+            ("JSON 前缀:", "json_prefix_var",   "media_instruct/test"),
+            ("封面前缀:",  "cover_prefix_var",  "media_cover/test"),
         ]:
             ttk.Label(frm, text=label).grid(row=row, column=0, sticky="w", pady=2)
             var = tk.StringVar(value=default)
@@ -119,16 +141,22 @@ class MediaUploadApp:
             ttk.Entry(frm, textvariable=var).grid(row=row, column=1, sticky="ew", pady=2)
             row += 1
 
-        # ---- 封面截取时间 ----
-        ttk.Label(frm, text="封面截取时间 (秒):").grid(row=row, column=0, sticky="w", pady=2)
+        # ---- 封面截取 ----
+        self.extract_cover_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            frm, text="截取封面", variable=self.extract_cover_var,
+            command=self._toggle_cover_time,
+        ).grid(row=row, column=0, columnspan=2, sticky="w", pady=2)
+        row += 1
+
+        ttk.Label(frm, text="  截取时间 (秒):").grid(row=row, column=0, sticky="w", pady=2)
         self.cover_time_var = tk.StringVar(value="1.0")
-        ttk.Entry(frm, textvariable=self.cover_time_var, width=10).grid(
-            row=row, column=1, sticky="w", pady=2
-        )
+        self.cover_time_entry = ttk.Entry(frm, textvariable=self.cover_time_var, width=10)
+        self.cover_time_entry.grid(row=row, column=1, sticky="w", pady=2)
         row += 1
 
         # ---- DB 字段 ----
-        ttk.Label(frm, text="type:").grid(row=row, column=0, sticky="w", pady=2)
+        ttk.Label(frm, text="类型(0: 普通视频, 1: VR视频):").grid(row=row, column=0, sticky="w", pady=2)
         self.type_var = tk.StringVar(value="0")
         ttk.Combobox(
             frm, textvariable=self.type_var,
@@ -137,8 +165,8 @@ class MediaUploadApp:
         ).grid(row=row, column=1, sticky="w", pady=2)
         row += 1
 
-        ttk.Label(frm, text="service_level_limits:").grid(row=row, column=0, sticky="w", pady=2)
-        self.sll_var = tk.StringVar(value="0")
+        ttk.Label(frm, text="服务等级:").grid(row=row, column=0, sticky="w", pady=2)
+        self.sll_var = tk.StringVar(value="3")
         ttk.Combobox(
             frm, textvariable=self.sll_var,
             values=["0", "1", "2", "3"],
@@ -146,9 +174,40 @@ class MediaUploadApp:
         ).grid(row=row, column=1, sticky="w", pady=2)
         row += 1
 
-        ttk.Label(frm, text="common (空 = NULL):").grid(row=row, column=0, sticky="w", pady=2)
-        self.common_var = tk.StringVar(value="")
-        ttk.Entry(frm, textvariable=self.common_var, width=10).grid(row=row, column=1, sticky="w", pady=2)
+        ttk.Label(frm, text="common\n(0: 指定玩具, 1: 所有用户):").grid(row=row, column=0, sticky="w", pady=2)
+        self.common_var = tk.StringVar(value="0: 指定玩具")
+        common_cb = ttk.Combobox(
+            frm, textvariable=self.common_var,
+            values=["0: 指定玩具", "1: 所有用户"],
+            state="readonly", width=14,
+        )
+        common_cb.grid(row=row, column=1, sticky="w", pady=2)
+        common_cb.bind("<<ComboboxSelected>>", lambda e: self._toggle_toy_model_frame())
+        row += 1
+
+        # ---- 玩具型号（common=0 时显示）----
+        self.toy_model_frame = ttk.Frame(frm)
+        self.toy_model_frame.grid(row=row, column=0, columnspan=2, sticky="ew", pady=2)
+        self.toy_model_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(self.toy_model_frame, text="  玩具型号:").grid(
+            row=0, column=0, sticky="nw", padx=(0, 4)
+        )
+        _lf = ttk.Frame(self.toy_model_frame)
+        _lf.grid(row=0, column=1, sticky="ew")
+        _lf.columnconfigure(0, weight=1)
+
+        self.toy_model_listbox = tk.Listbox(
+            _lf, selectmode=tk.EXTENDED, height=5, exportselection=False,
+        )
+        for _m in _TOY_MODELS:
+            self.toy_model_listbox.insert(tk.END, _m)
+        self.toy_model_listbox.selection_set(0, tk.END)  # 默认全选
+        self.toy_model_listbox.grid(row=0, column=0, sticky="ew")
+
+        _toy_sb = ttk.Scrollbar(_lf, orient="vertical", command=self.toy_model_listbox.yview)
+        _toy_sb.grid(row=0, column=1, sticky="ns")
+        self.toy_model_listbox.configure(yscrollcommand=_toy_sb.set)
         row += 1
 
         # ---- 按钮 ----
@@ -200,6 +259,28 @@ class MediaUploadApp:
     # 事件处理
     # ------------------------------------------------------------------
 
+    def _on_env_changed(self) -> None:
+        env = self.env_var.get()
+        suffix = f"/{env}" if env == "test" else ""
+        self.video_prefix_var.set(f"media_video{suffix}")
+        self.json_prefix_var.set(f"media_instruct{suffix}")
+        self.cover_prefix_var.set(f"media_cover{suffix}")
+        if env == "test":
+            self.clear_history_row.grid()
+        else:
+            self.clear_history_row.grid_remove()
+            self.clear_history_var.set(False)
+
+    def _toggle_toy_model_frame(self) -> None:
+        if self.common_var.get().startswith("0"):
+            self.toy_model_frame.grid()
+        else:
+            self.toy_model_frame.grid_remove()
+
+    def _toggle_cover_time(self) -> None:
+        state = "normal" if self.extract_cover_var.get() else "disabled"
+        self.cover_time_entry.configure(state=state)
+
     def _browse_folder(self) -> None:
         folder = filedialog.askdirectory(title="选择上传目录")
         if folder:
@@ -220,20 +301,31 @@ class MediaUploadApp:
             return
 
         try:
-            cover_time    = float(self.cover_time_var.get())
+            cover_time: Optional[float] = (
+                float(self.cover_time_var.get()) if self.extract_cover_var.get() else None
+            )
             default_type  = int(self.type_var.get().split(":")[0])
             sll           = int(self.sll_var.get())
-            common_str    = self.common_var.get().strip()
-            common: Optional[int] = int(common_str) if common_str else None
+            common: Optional[int] = int(self.common_var.get().split(":")[0])
         except ValueError as exc:
             messagebox.showerror("参数错误", f"数值参数格式有误: {exc}")
             return
+
+        if common == 0:
+            sel = self.toy_model_listbox.curselection()
+            toy_models: List[str] = [self.toy_model_listbox.get(i) for i in sel]
+            if not toy_models:
+                messagebox.showerror("参数错误", "common=0（指定玩具）时请至少选择一个玩具型号。")
+                return
+        else:
+            toy_models = []
 
         params = dict(
             folder=folder,
             env=self.env_var.get(),
             recursive=self.recursive_var.get(),
             dry_run=self.dry_run_var.get(),
+            clear_history=self.clear_history_var.get(),
             video_prefix=self.video_prefix_var.get().strip(),
             json_prefix=self.json_prefix_var.get().strip(),
             cover_prefix=self.cover_prefix_var.get().strip(),
@@ -241,6 +333,7 @@ class MediaUploadApp:
             default_type=default_type,
             default_service_level_limits=sll,
             default_common=common,
+            toy_models=toy_models,
         )
 
         self._running = True
@@ -258,13 +351,15 @@ class MediaUploadApp:
         env: str,
         recursive: bool,
         dry_run: bool,
+        clear_history: bool,
         video_prefix: str,
         json_prefix: str,
         cover_prefix: str,
-        cover_time_sec: float,
+        cover_time_sec: Optional[float],
         default_type: int,
         default_service_level_limits: int,
         default_common: Optional[int],
+        toy_models: List[str],
     ) -> None:
         # 把 logging 输出导入队列
         handler = _QueueHandler(self._log_queue)
@@ -283,6 +378,16 @@ class MediaUploadApp:
         try:
             from daily_py.media_video_pipeline import MediaVideoPipeline
 
+            # 上传前清空历史数据（仅 test 环境，dry_run 时跳过）
+            if clear_history and not dry_run:
+                from daily_py.db.config import create_connection
+                _log = logging.getLogger(__name__)
+                _log.info("清空历史数据：UPDATE media_video SET deleted_flag = -1")
+                _db = create_connection(env)
+                with _db.cursor() as cur:
+                    cur.execute("UPDATE media_video SET deleted_flag = -1")
+                _log.info("历史数据已清空")
+
             pipeline = MediaVideoPipeline(
                 env=env,
                 video_prefix=video_prefix,
@@ -292,6 +397,7 @@ class MediaUploadApp:
                 default_type=default_type,
                 default_service_level_limits=default_service_level_limits,
                 default_common=default_common,
+                toy_models=toy_models,
             )
             pipeline.run(folder, recursive=recursive, dry_run=dry_run)
 

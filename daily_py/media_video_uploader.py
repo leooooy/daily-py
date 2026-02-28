@@ -26,6 +26,7 @@ Example::
         print(r)
 """
 
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -33,7 +34,9 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from .db.models.media_video import MediaVideo
+from .db.models.toy_model_video import ToyModelVideo
 from .db.repositories.media_video_repository import MediaVideoRepository
+from .db.repositories.toy_model_video_repository import ToyModelVideoRepository
 from .image_handler import ImageHandler
 from .s3.uploader import S3Uploader
 
@@ -84,11 +87,13 @@ class MediaVideoUploader:
         video_prefix: str = "media_video",
         json_prefix: str = "media_instruct",
         cover_prefix: str = "media_cover",
-        cover_time_sec: float = 1.0,
+        cover_time_sec: Optional[float] = 1.0,
         default_type: int = 0,
         default_show_status: int = 1,
         default_service_level_limits: int = 0,
         default_common: Optional[int] = None,
+        toy_model_repo: Optional[ToyModelVideoRepository] = None,
+        toy_models: Optional[List[str]] = None,
     ) -> None:
         self._repo = repo
         self._s3 = uploader
@@ -101,6 +106,8 @@ class MediaVideoUploader:
         self._default_show_status = default_show_status
         self._default_service_level_limits = default_service_level_limits
         self._default_common = default_common
+        self._toy_model_repo = toy_model_repo
+        self._toy_models = toy_models or []
         self._log = logging.getLogger(__name__)
 
     # ------------------------------------------------------------------
@@ -146,6 +153,11 @@ class MediaVideoUploader:
 
         ok = sum(1 for r in results if r.success)
         self._log.info("完成：%d 成功 / %d 失败", ok, len(results) - ok)
+
+        # ⑧ 全部上传完成后，更新关联的 ToyModelVideo
+        if ok > 0 and self._default_common == 0 and self._toy_models and self._toy_model_repo:
+            self._update_toy_model_videos()
+
         return results
 
     # ------------------------------------------------------------------
@@ -169,18 +181,37 @@ class MediaVideoUploader:
             return ret
 
         try:
+            # ⓪ 校验并修复视频宽高奇数尺寸
+            if dry_run:
+                vw, vh = _t("⓪检查尺寸", self._ih.get_video_size, mp4_path)
+                if vw % 2 != 0 or vh % 2 != 0:
+                    self._log.warning(
+                        "⓪ %s 尺寸含奇数（%dx%d），实际上传时将自动修复", stem, vw, vh
+                    )
+            else:
+                _t("⓪修复尺寸", self._ih.ensure_even_dimensions, mp4_path)
+
             # ① 获取视频时长
             duration_f = _t("①时长", self._ih.get_video_duration, mp4_path)
             duration = max(0, int(duration_f))
             result.duration = duration
 
-            # ② 截取封面帧
-            cover_at = min(self._cover_time, max(0.0, duration_f * 0.1)) if duration_f > 0 else 0.0
-            cover_tmp = mp4_path.parent / f"{stem}.jpg"
-            _t("②截帧", self._ih.extract_frame, mp4_path, cover_at, output_path=cover_tmp)
+            cover_tmp: Optional[Path] = None
+            cover_w = cover_h = 0
+            if self._cover_time is not None:
+                # ② 截取封面帧
+                cover_at = min(self._cover_time, max(0.0, duration_f * 0.1)) if duration_f > 0 else 0.0
+                cover_tmp = mp4_path.parent / f"{stem}.jpg"
+                _t("②截帧", self._ih.extract_frame, mp4_path, cover_at, output_path=cover_tmp)
 
-            # ③ 获取封面尺寸
-            cover_w, cover_h = _t("③封面尺寸", self._ih.get_image_size, cover_tmp)
+                # ③ 获取封面尺寸
+                cover_w, cover_h = _t("③封面尺寸", self._ih.get_image_size, cover_tmp)
+            else:
+                # ②' 不截帧，直接使用目录内已有的同名 .jpg
+                existing = mp4_path.parent / f"{stem}.jpg"
+                if existing.exists():
+                    cover_tmp = existing
+                    cover_w, cover_h = _t("③封面尺寸", self._ih.get_image_size, cover_tmp)
 
             # ---- dry-run ----
             if dry_run:
@@ -189,7 +220,10 @@ class MediaVideoUploader:
                     f"[dry-run] {self._json_prefix}/{mp4_path.stem}.json"
                     if json_path else ""
                 )
-                result.media_cover_url = f"[dry-run] {self._cover_prefix}/{stem}.jpg"
+                result.media_cover_url = (
+                    f"[dry-run] {self._cover_prefix}/{stem}.jpg"
+                    if cover_tmp is not None else ""
+                )
                 result.success = True
                 self._log_timings(stem, timings)
                 return result
@@ -209,12 +243,13 @@ class MediaVideoUploader:
                     self._s3.upload_file, str(json_path), json_key, content_type="application/json",
                 )
 
-            # ⑥ 上传封面
-            cover_key = f"{self._cover_prefix}/{stem}.jpg"
-            result.media_cover_url = _t(
-                "⑥上传封面",
-                self._s3.upload_file, str(cover_tmp), cover_key, content_type="image/jpeg",
-            )
+            # ⑥ 上传封面（cover_time=None 时跳过）
+            if cover_tmp is not None:
+                cover_key = f"{self._cover_prefix}/{stem}.jpg"
+                result.media_cover_url = _t(
+                    "⑥上传封面",
+                    self._s3.upload_file, str(cover_tmp), cover_key, content_type="image/jpeg",
+                )
 
             # ⑦ 写入数据库
             video = MediaVideo(
@@ -241,6 +276,23 @@ class MediaVideoUploader:
 
         self._log_timings(stem, timings)
         return result
+
+    def _update_toy_model_videos(self) -> None:
+        """查询所有 common=0 且 deleted_flag=1 的视频 ID，更新 toy_model_video 表。"""
+        videos = self._repo.find_all(
+            where="common = %s AND deleted_flag = %s",
+            params=(0, 1),
+        )
+        ids = [v.id for v in videos]
+        video_ids_str = json.dumps(ids, separators=(",", ":"))
+        for toy_model in self._toy_models:
+            self._toy_model_repo.upsert(  # type: ignore[union-attr]
+                ToyModelVideo(toy_model=toy_model, video_ids=video_ids_str)
+            )
+        self._log.info(
+            "⑧ ToyModelVideo 已更新：%d 个型号，video_ids 共 %d 条",
+            len(self._toy_models), len(ids),
+        )
 
     def _log_timings(self, stem: str, timings: Dict[str, float]) -> None:
         if not timings:
