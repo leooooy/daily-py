@@ -80,8 +80,8 @@ class MediaVideoRepository(BaseRepository[MediaVideo]):
             conditions.append("type = %s")
             params.append(video_type)
         if name_keyword:
-            conditions.append("media_name LIKE %s")
-            params.append(f"%{name_keyword}%")
+            conditions.append("(media_name LIKE %s OR media_url LIKE %s)")
+            params.extend([f"%{name_keyword}%", f"%{name_keyword}%"])
         where = " AND ".join(conditions) if conditions else None
         return self.find_page(
             page=page,

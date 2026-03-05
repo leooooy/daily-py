@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import io
 import os
+import sys
 from pathlib import Path
 from typing import Optional, Tuple, Union, Dict, Any
 import logging
@@ -42,6 +43,27 @@ except Exception:
         RESAMPLE = Image.NEAREST  # type: ignore
 
 
+def _find_ffmpeg(name: str = "ffmpeg") -> Optional[str]:
+    """在 PATH 和 Windows 常见安装位置中查找 ffmpeg/ffprobe 可执行文件。"""
+    found = shutil.which(name)
+    print(f"路径查找{name}: {found}")
+    if found:
+        return found
+    if sys.platform == "win32":
+        candidates = [
+            Path(os.environ.get("LOCALAPPDATA", "")) / "ffmpeg" / "bin",
+            Path(os.environ.get("ProgramFiles", "")) / "ffmpeg" / "bin",
+            Path("C:/ffmpeg/bin"),
+            Path("D:/ffmpeg/bin"),
+        ]
+        suffix = ".exe"
+        for d in candidates:
+            p = d / (name + suffix)
+            if p.is_file():
+                return str(p)
+    return None
+
+
 class ImageHandler:
     """图像处理器
     提供常用的图像/视频处理能力：尺寸获取、帧提取、缩放、压缩、去水印等。
@@ -54,8 +76,13 @@ class ImageHandler:
             self.logger.addHandler(logging.StreamHandler())
             self.logger.setLevel(logging.INFO)
         # 预检测 ffmpeg 是否可用，作为后端选项之一
-        self._ffmpeg_path = shutil.which("ffmpeg")
+        self._ffmpeg_path = _find_ffmpeg("ffmpeg")
         self.ffmpeg_available = self._ffmpeg_path is not None
+        if not self.ffmpeg_available:
+            self.logger.warning(
+                "未检测到 ffmpeg，部分视频功能不可用。"
+                "请安装 ffmpeg 并加入 PATH，或放置到 C:/ffmpeg/bin/"
+            )
 
     def _resolve(self, path: Union[str, Path]) -> Path:
         p = Path(path)
@@ -126,7 +153,7 @@ class ImageHandler:
             raise FileNotFoundError(f"视频不存在: {video_p}")
 
         # ① ffprobe（最轻量，不需要加载整个视频）
-        ffprobe = shutil.which("ffprobe") or shutil.which("ffprobe.exe")
+        ffprobe = _find_ffmpeg("ffprobe")
         if ffprobe:
             cmd = [
                 ffprobe, "-v", "error",
@@ -189,7 +216,7 @@ class ImageHandler:
         if not video_p.exists():
             raise FileNotFoundError(f"视频不存在: {video_p}")
 
-        ffprobe = shutil.which("ffprobe") or shutil.which("ffprobe.exe")
+        ffprobe = _find_ffmpeg("ffprobe")
         if ffprobe:
             cmd = [
                 ffprobe, "-v", "error",

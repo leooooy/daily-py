@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import queue
 import sys
@@ -270,7 +271,8 @@ class MediaVideoManageApp:
             repo = MediaVideoRepository(db)
             repo.count()   # 测试连通性
             self._task_queue.put(("connect_ok", db, repo))
-        except Exception as exc:
+        except BaseException as exc:
+            logging.getLogger(__name__).exception("数据库连接失败")
             self._task_queue.put(("connect_err", str(exc)))
 
     def _open_upload(self) -> None:
@@ -394,7 +396,8 @@ class MediaVideoManageApp:
                 name_keyword=keyword,
             )
             self._task_queue.put(("query_ok", items, total))
-        except Exception as exc:
+        except BaseException as exc:
+            logging.getLogger(__name__).exception("查询失败")
             self._task_queue.put(("query_err", str(exc)))
 
     # ------------------------------------------------------------------
@@ -464,7 +467,8 @@ class MediaVideoManageApp:
                 elif action == "hard_delete":
                     affected += self._repo.delete_by_id(vid)
             self._task_queue.put(("action_ok", action, affected))
-        except Exception as exc:
+        except BaseException as exc:
+            logging.getLogger(__name__).exception("操作 %s 失败", action)
             self._task_queue.put(("action_err", str(exc)))
 
     # ------------------------------------------------------------------
@@ -567,7 +571,14 @@ class MediaVideoManageApp:
     def _poll_queue(self) -> None:
         try:
             while True:
-                self._handle_msg(self._task_queue.get_nowait())
+                msg = self._task_queue.get_nowait()
+                try:
+                    self._handle_msg(msg)
+                except Exception:
+                    logging.getLogger(__name__).exception(
+                        "处理队列消息时出错: %s", msg[0] if msg else "?"
+                    )
+                    self.status_var.set("内部错误，请查看日志")
         except queue.Empty:
             pass
         self.master.after(100, self._poll_queue)
@@ -634,10 +645,31 @@ def _fmt(val) -> str:
 # 入口
 # ---------------------------------------------------------------------------
 
+def _setup_logging() -> None:
+    """配置文件日志，确保 GUI 崩溃时有迹可查。"""
+    log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "logs")
+    os.makedirs(log_dir, exist_ok=True)
+    log_file = os.path.join(log_dir, "media_video_manage_gui.log")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
+        handlers=[
+            logging.FileHandler(log_file, encoding="utf-8"),
+            logging.StreamHandler(),
+        ],
+    )
+
+
 def main() -> None:
-    root = tk.Tk()
-    MediaVideoManageApp(root)
-    root.mainloop()
+    _setup_logging()
+    logger = logging.getLogger(__name__)
+    try:
+        root = tk.Tk()
+        MediaVideoManageApp(root)
+        root.mainloop()
+    except Exception:
+        logger.exception("主窗口异常退出")
+        raise
 
 
 if __name__ == "__main__":
