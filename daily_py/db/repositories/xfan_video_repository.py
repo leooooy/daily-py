@@ -1,0 +1,51 @@
+"""XfanVideo 业务仓库。"""
+
+from typing import List, Tuple
+
+from ..base_repository import BaseRepository
+from ..models.xfan_video import XfanVideo
+
+
+class XfanVideoRepository(BaseRepository[XfanVideo]):
+    """针对 xfan_video 表的业务仓库。"""
+
+    table_name = "xfan_video"
+    primary_key = "id"
+    model_class = XfanVideo
+    auto_fields = ("create_time", "update_time")
+
+    # 需要排除的 character_id 列表（主线角色）
+    EXCLUDED_CHARACTER_IDS = (
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+        11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+        21, 22, 23, 24,
+        1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008,
+        1009, 1010, 1011, 1012, 1013, 1014, 1015, 1016, 1017,
+    )
+
+    # ------------------------------------------------------------------
+    # 业务查询
+    # ------------------------------------------------------------------
+
+    def find_all_active(self) -> List[XfanVideo]:
+        """查询所有未删除（deleted_flag=1）且排除主线角色的视频，按 id 升序。"""
+        placeholders = ",".join(["%s"] * len(self.EXCLUDED_CHARACTER_IDS))
+        return self.find_all(
+            where=f"deleted_flag = %s AND character_id NOT IN ({placeholders})",
+            params=(1, *self.EXCLUDED_CHARACTER_IDS),
+            order_by="id ASC",
+        )
+
+    def find_active(
+        self,
+        page: int = 1,
+        page_size: int = 100,
+    ) -> Tuple[List[XfanVideo], int]:
+        """分页查询未删除（deleted_flag=1）的视频，按 id 升序。"""
+        return self.find_page(
+            page=page,
+            page_size=page_size,
+            where="deleted_flag = %s",
+            params=(1,),
+            order_by="id ASC",
+        )

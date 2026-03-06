@@ -11,8 +11,10 @@ try:
     from .base_repository import BaseRepository
     from .models.media_video import MediaVideo
     from .models.toy_model_video import ToyModelVideo
+    from .models.xfan_video import XfanVideo
     from .repositories.media_video_repository import MediaVideoRepository
     from .repositories.toy_model_video_repository import ToyModelVideoRepository
+    from .repositories.xfan_video_repository import XfanVideoRepository
     from .config import create_connection, ENVS
 
     __all__ = [
@@ -22,6 +24,8 @@ try:
         "ToyModelVideo",
         "MediaVideoRepository",
         "ToyModelVideoRepository",
+        "XfanVideo",
+        "XfanVideoRepository",
         "create_connection",
         "ENVS",
     ]
