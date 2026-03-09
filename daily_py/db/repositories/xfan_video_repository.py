@@ -36,6 +36,13 @@ class XfanVideoRepository(BaseRepository[XfanVideo]):
             order_by="id ASC",
         )
 
+    def find_by_video_url_containing(self, keyword: str) -> List[XfanVideo]:
+        """查询 video_url 包含指定关键字的未删除记录。"""
+        return self.find_all(
+            where="deleted_flag = %s AND video_url LIKE %s",
+            params=(1, f"%{keyword}%"),
+        )
+
     def find_active(
         self,
         page: int = 1,
