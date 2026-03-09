@@ -14,7 +14,7 @@ Example::
     from daily_py.db.config import create_connection
     from daily_py.db.repositories.media_video_repository import MediaVideoRepository
     from daily_py.s3.config import create_uploader
-    from daily_py.media_video_uploader import MediaVideoUploader
+    from daily_py.services.media_video.uploader import MediaVideoUploader
 
     db   = create_connection("prod")
     repo = MediaVideoRepository(db)
@@ -28,17 +28,23 @@ Example::
 
 import json
 import logging
+import os
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from .db.models.media_video import MediaVideo
-from .db.models.toy_model_video import ToyModelVideo
-from .db.repositories.media_video_repository import MediaVideoRepository
-from .db.repositories.toy_model_video_repository import ToyModelVideoRepository
-from .image_handler import ImageHandler
-from .s3.uploader import S3Uploader
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
+from daily_py.db.models.media_video import MediaVideo
+from daily_py.db.models.toy_model_video import ToyModelVideo
+from daily_py.db.repositories.media_video_repository import MediaVideoRepository
+from daily_py.db.repositories.toy_model_video_repository import ToyModelVideoRepository
+from daily_py.image_handler import ImageHandler
+from daily_py.s3.uploader import S3Uploader
 
 
 @dataclass

@@ -5,7 +5,7 @@ MediaVideoUploader，无需手动组装依赖。
 
 Example::
 
-    from daily_py.media_video_pipeline import MediaVideoPipeline
+    from daily_py.services.media_video.pipeline import MediaVideoPipeline
 
     # 测试环境（默认）
     pipeline = MediaVideoPipeline(env="test")
@@ -20,15 +20,19 @@ Example::
 
 CLI::
 
-    python -m daily_py.media_video_pipeline D:/videos --env test --recursive
+    python -m daily_py.services.media_video.pipeline D:/videos --env test --recursive
 """
 
 import logging
+import os
 import sys
 from typing import List, Optional
 
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
-from .media_video_uploader import MediaVideoUploader, UploadResult
+from daily_py.services.media_video.uploader import MediaVideoUploader, UploadResult
 
 
 def _setup_logging() -> None:
@@ -124,10 +128,10 @@ class MediaVideoPipeline:
         List[UploadResult]
             每个 .mp4 对应一条结果记录。
         """
-        from .db.config import create_connection
-        from .db.repositories.media_video_repository import MediaVideoRepository
-        from .image_handler import ImageHandler
-        from .s3.config import create_uploader
+        from daily_py.db.config import create_connection
+        from daily_py.db.repositories.media_video_repository import MediaVideoRepository
+        from daily_py.image_handler import ImageHandler
+        from daily_py.s3.config import create_uploader
 
         self._log.info("=" * 60)
         self._log.info("MediaVideoPipeline  env=%-6s  dry_run=%s", self._env, dry_run)
@@ -146,7 +150,7 @@ class MediaVideoPipeline:
 
         toy_model_repo = None
         if self._toy_models:
-            from .db.repositories.toy_model_video_repository import ToyModelVideoRepository
+            from daily_py.db.repositories.toy_model_video_repository import ToyModelVideoRepository
             toy_model_repo = ToyModelVideoRepository(db)
 
         uploader = MediaVideoUploader(
@@ -182,7 +186,6 @@ class MediaVideoPipeline:
         print(f"  上传完成{tag}   成功 {len(ok)} / 失败 {len(fails)} / 共 {len(results)}")
         print(sep)
 
-        # 成功项
         for r in ok:
             print(f"  ✓  {r.stem:<30}  dur={r.duration:>4}s  id={r.media_id}")
             print(f"       媒体:  {r.media_url}")
@@ -190,7 +193,6 @@ class MediaVideoPipeline:
                 print(f"       指令:  {r.media_instruct_url}")
             print(f"       封面:  {r.media_cover_url}")
 
-        # 失败项
         if fails:
             print(f"\n  失败项：")
             for r in fails:
@@ -200,7 +202,7 @@ class MediaVideoPipeline:
 
 
 # ---------------------------------------------------------------------------
-# CLI 入口：python -m daily_py.media_video_pipeline <folder> [options]
+# CLI 入口：python -m daily_py.services.media_video.pipeline <folder> [options]
 # ---------------------------------------------------------------------------
 
 def _main() -> None:
@@ -243,7 +245,6 @@ def _main() -> None:
         recursive=args.recursive,
         dry_run=args.dry_run,
     )
-    # 有失败项时以非零状态码退出，方便 CI 感知
     sys.exit(0 if all(r.success for r in results) else 1)
 
 

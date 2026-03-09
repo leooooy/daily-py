@@ -35,7 +35,7 @@ except Exception:
     pass
 
 try:
-    from .media_video_uploader import MediaVideoUploader, UploadResult  # type: ignore
+    from .services.media_video.uploader import MediaVideoUploader, UploadResult  # type: ignore
     __all__ += ["MediaVideoUploader", "UploadResult"]
 except Exception:
     pass

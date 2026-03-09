@@ -6,7 +6,7 @@
 
 Usage::
 
-    python -m daily_py.xfan_video_instruct_updater D:/json_files --env prod
+    python -m daily_py.services.xfan_video.instruct_updater D:/json_files --env prod
 
 示例::
 
@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
@@ -95,7 +95,7 @@ class XfanVideoInstructUpdater:
         if not base.is_dir():
             raise NotADirectoryError(f"目录不存在：{json_dir}")
 
-        json_files = sorted(base.glob("*.json"))
+        json_files = sorted(base.rglob("*.json"))
         self._log.info("在 %s 中找到 %d 个 .json 文件", json_dir, len(json_files))
 
         if not json_files:
@@ -120,11 +120,9 @@ class XfanVideoInstructUpdater:
         result = UpdateResult(json_file=json_path.name)
 
         try:
-            # 去掉 .json 后缀作为搜索关键字
             keyword = json_path.stem
             result.keyword = keyword
 
-            # 查找 video_url 包含该关键字的记录
             matches = repo.find_by_video_url_containing(keyword)
             result.match_count = len(matches)
 
@@ -142,12 +140,10 @@ class XfanVideoInstructUpdater:
             video = matches[0]
             result.video_id = video.id
 
-            # 上传 JSON 到 S3
             s3_key = f"{self._s3_prefix}/{json_path.name}"
             s3_url = uploader.upload_file(str(json_path), s3_key, content_type="application/json")
             result.s3_url = s3_url
 
-            # 更新 instruct_url
             affected = repo.update_fields(video.id, instruct_url=s3_url)
             if affected == 0:
                 result.error = f"更新失败，受影响行数为 0 (id={video.id})"
@@ -230,18 +226,14 @@ def main() -> None:
     sys.exit(0 if all(r.success or r.skipped for r in results) else 1)
 
 
-# ---------------------------------------------------------------------------
-# 右键 Run 快捷入口
-# ---------------------------------------------------------------------------
-
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         main()
     else:
         # ===== 在这里填写参数 =====
-        JSON_DIR = r"D:/json_files"         # JSON 文件所在目录
-        ENV = "prod"                         # 数据库环境: "test" / "prod"
-        S3_PREFIX = "xfan/instruct"          # S3 上传路径前缀
+        JSON_DIR = r"E:\1、metaXsire内容\1、商业版APP\3、XFans\2. XFans角色视频共振素材\40角色-连接玩具导入账号"
+        ENV = "prod"
+        S3_PREFIX = "xfan/instruct"
         # ==========================
 
         _setup_logging()

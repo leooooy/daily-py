@@ -5,7 +5,7 @@
 
 Usage::
 
-    python -m daily_py.xfan_video_downloader D:/downloads/xfan --env prod
+    python -m daily_py.services.xfan_video.downloader D:/downloads/xfan --env prod
 
 URL 示例::
 
@@ -25,8 +25,7 @@ from pathlib import Path
 from typing import List, Optional
 from urllib.parse import urlparse
 
-# 确保无论从哪里启动，项目根目录都在 sys.path 上
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
@@ -88,7 +87,7 @@ def _extract_subfolder(url: str) -> str:
     return stem
 
 
-def _download_file(
+def download_file(
     url: str,
     dest: Path,
     timeout: int = 60,
@@ -214,7 +213,7 @@ class XfanVideoDownloader:
                 tmp.unlink()
 
             t0 = time.perf_counter()
-            size = _download_file(
+            size = download_file(
                 video.video_url,
                 dest,
                 timeout=self._timeout,
@@ -307,22 +306,16 @@ def main() -> None:
 
     sys.exit(0 if all(r.success or r.skipped for r in results) else 1)
 
-# ---------------------------------------------------------------------------
-# 右键 Run 快捷入口 —— 直接修改下方参数即可运行
-# 命令行 — python -m daily_py.xfan_video_downloader D:/downloads/xfan --env prod
-# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
-        # 命令行: python -m daily_py.xfan_video_downloader D:/downloads/xfan --env prod
         main()
     else:
-        # 右键 Run: 直接修改下方参数
         # ===== 在这里填写参数 =====
-        OUTPUT_DIR = r"E:\metaXsire\1、商业版APP\3、XFans\其他人物"   # 下载目标目录
-        ENV = "prod"                        # 数据库环境: "test" / "prod"
-        TIMEOUT = 60                        # HTTP 超时（秒）
-        CHUNK_SIZE = 8192                   # 下载块大小（字节）
+        OUTPUT_DIR = r"E:\metaXsire\1、商业版APP\3、XFans\其他人物"
+        ENV = "prod"
+        TIMEOUT = 60
+        CHUNK_SIZE = 8192
         # ==========================
 
         _setup_logging()
