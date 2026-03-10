@@ -90,6 +90,160 @@ class ImageHandler:
             p = self.base_path / p
         return p
 
+    _VIDEO_EXTS = {".mp4", ".avi", ".mkv", ".mov", ".wmv", ".flv", ".webm", ".m4v", ".ts", ".mpg", ".mpeg", ".3gp"}
+    _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif", ".webp", ".ico", ".svg"}
+
+    @staticmethod
+    def _is_url(s: str) -> bool:
+        from urllib.parse import urlparse
+        try:
+            r = urlparse(str(s))
+            return r.scheme in ("http", "https")
+        except Exception:
+            return False
+
+    @staticmethod
+    def _ext_from_url(url: str) -> str:
+        """从 URL 路径中提取文件扩展名。"""
+        from urllib.parse import urlparse
+        path = urlparse(url).path
+        return Path(path).suffix.lower()
+
+    def _probe_with_ffprobe(self, source: str) -> Optional[Dict[str, Any]]:
+        """用 ffprobe 探测媒体源（本地路径或 URL），返回解析后的 JSON 或 None。"""
+        import json as _json
+        ffprobe = _find_ffmpeg("ffprobe")
+        if not ffprobe:
+            return None
+        cmd = [
+            ffprobe, "-v", "error",
+            "-show_format", "-show_streams",
+            "-print_format", "json",
+            source,
+        ]
+        res = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            text=True, errors="replace",
+            **_SUBPROCESS_FLAGS,
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            return _json.loads(res.stdout)
+        return None
+
+    def _fill_video_info(self, base_info: Dict[str, Any], probe: Dict[str, Any]) -> None:
+        """从 ffprobe JSON 结果中填充视频信息到 base_info。"""
+        fmt = probe.get("format", {})
+        base_info["format"] = fmt.get("format_long_name", fmt.get("format_name", ""))
+        base_info["duration_sec"] = float(fmt.get("duration", 0))
+        base_info["bit_rate"] = int(fmt.get("bit_rate", 0))
+        for stream in probe.get("streams", []):
+            codec_type = stream.get("codec_type", "")
+            if codec_type == "video":
+                base_info["video_codec"] = stream.get("codec_name", "")
+                base_info["video_profile"] = stream.get("profile", "")
+                base_info["width"] = stream.get("width", 0)
+                base_info["height"] = stream.get("height", 0)
+                base_info["video_bit_rate"] = int(stream.get("bit_rate", 0))
+                base_info["frame_rate"] = stream.get("r_frame_rate", "")
+                base_info["pix_fmt"] = stream.get("pix_fmt", "")
+            elif codec_type == "audio":
+                base_info["audio_codec"] = stream.get("codec_name", "")
+                base_info["audio_sample_rate"] = stream.get("sample_rate", "")
+                base_info["audio_channels"] = stream.get("channels", 0)
+                base_info["audio_bit_rate"] = int(stream.get("bit_rate", 0))
+
+    # 0) 获取媒体文件详细信息
+    def get_media_info(self, file_path: Union[str, Path]) -> Dict[str, Any]:
+        """获取媒体文件的详细信息。支持本地路径和 HTTP/HTTPS URL。
+
+        视频：使用 ffprobe 获取完整编码信息（ffprobe 原生支持 URL，无需下载）。
+        图片（本地）：使用 PIL 获取尺寸、格式、EXIF。
+        图片（URL）：使用 ffprobe 获取基本信息。
+
+        Returns:
+            字典，包含 type（'video'/'image'）及各属性。
+        """
+        source = str(file_path)
+        is_url = self._is_url(source)
+
+        if is_url:
+            ext = self._ext_from_url(source)
+            base_info: Dict[str, Any] = {"source_url": source}
+            # 从 URL 路径提取文件名
+            from urllib.parse import urlparse
+            url_path = urlparse(source).path
+            base_info["file_name"] = Path(url_path).name or source
+
+            probe = self._probe_with_ffprobe(source)
+            if probe:
+                # 根据流类型判断 type
+                has_video = any(s.get("codec_type") == "video" for s in probe.get("streams", []))
+                if has_video or ext in self._VIDEO_EXTS:
+                    base_info["type"] = "video"
+                elif ext in self._IMAGE_EXTS:
+                    base_info["type"] = "image"
+                else:
+                    base_info["type"] = "video" if has_video else "unknown"
+                self._fill_video_info(base_info, probe)
+                # 文件大小从 format.size 获取
+                fmt_size = probe.get("format", {}).get("size")
+                if fmt_size:
+                    base_info["file_size"] = int(fmt_size)
+            else:
+                base_info["type"] = "unknown"
+                base_info["error"] = "ffprobe 不可用，无法探测远程媒体"
+            return base_info
+
+        # 本地文件
+        p = self._resolve(file_path)
+        if not p.exists():
+            raise FileNotFoundError(f"文件不存在: {p}")
+
+        stat = p.stat()
+        base_info = {
+            "file_name": p.name,
+            "file_size": stat.st_size,
+            "absolute_path": str(p.resolve()),
+        }
+        ext = p.suffix.lower()
+
+        if ext in self._VIDEO_EXTS:
+            base_info["type"] = "video"
+            probe = self._probe_with_ffprobe(str(p))
+            if probe:
+                self._fill_video_info(base_info, probe)
+            else:
+                try:
+                    w, h = self.get_video_size(p)
+                    base_info["width"] = w
+                    base_info["height"] = h
+                except Exception:
+                    pass
+                try:
+                    dur = self.get_video_duration(p)
+                    base_info["duration_sec"] = dur / 1000.0
+                except Exception:
+                    pass
+
+        elif ext in self._IMAGE_EXTS:
+            base_info["type"] = "image"
+            try:
+                with Image.open(p) as img:
+                    base_info["width"] = img.width
+                    base_info["height"] = img.height
+                    base_info["image_format"] = img.format or ""
+                    base_info["image_mode"] = img.mode
+                    exif = self.get_exif(p)
+                    if exif:
+                        base_info["exif"] = exif
+            except Exception as e:
+                base_info["error"] = str(e)
+        else:
+            base_info["type"] = "unknown"
+
+        return base_info
+
     # 1) 获取图片宽高
     def get_image_size(self, image_path: Union[str, Path]) -> Tuple[int, int]:
         p = self._resolve(image_path)
@@ -100,16 +254,21 @@ class ImageHandler:
 
     # 2) 视频某帧截图
     def extract_frame(self, video_path: Union[str, Path], time_sec: float, output_path: Optional[Union[str, Path]] = None, backend: str = "auto") -> Path:
-        """从视频中提取指定时间点的一帧，支持三种后端：ffmpeg、moviepy、auto（优先 ffmpeg）"""
-        # 优先选择 ffmpeg 后端
-        video_p = self._resolve(video_path)
-        if backend == "ffmpeg" or (backend == "auto" and (self.ffmpeg_available)):
+        """从视频中提取指定时间点的一帧，支持本地路径和 URL。"""
+        is_url = self._is_url(str(video_path))
+        video_src = str(video_path) if is_url else str(self._resolve(video_path))
+
+        if backend == "ffmpeg" or (backend == "auto" and self.ffmpeg_available):
             if not self.ffmpeg_available:
                 raise RuntimeError("FFmpeg 未检测到，但请求使用 ffmpeg 后端进行帧提取")
-            out = Path(output_path) if output_path else video_p.with_suffix(".png")
+            if output_path:
+                out = Path(output_path)
+            elif is_url:
+                out = Path.cwd() / f"frame_{time_sec:.1f}s.png"
+            else:
+                out = Path(video_src).with_suffix(".png")
             out.parent.mkdir(parents=True, exist_ok=True)
-            # 构造 FFmpeg 命令：截取时间点帧，输出为 PNG
-            cmd = [self._ffmpeg_path, "-y", "-ss", str(time_sec), "-i", str(video_p), "-frames:v", "1", "-f", "image2", str(out)]
+            cmd = [self._ffmpeg_path, "-y", "-ss", str(time_sec), "-i", video_src, "-frames:v", "1", "-f", "image2", str(out)]
             self.logger.info(f"使用 FFmpeg 提取帧: {cmd}")
             res = subprocess.run(
                 cmd,
@@ -119,11 +278,14 @@ class ImageHandler:
             )
             if res.returncode != 0 or not out.exists():
                 raise RuntimeError(f"FFmpeg 提取帧失败（returncode={res.returncode}）")
-            self.logger.info(f"已从视频 {video_p} 在 {time_sec}s 处截取帧并保存到 {out}")
+            self.logger.info(f"已从视频 {video_src} 在 {time_sec}s 处截取帧并保存到 {out}")
             return out
         else:
+            if is_url:
+                raise RuntimeError("MoviePy 后端不支持 URL，请确保 ffmpeg 可用")
             if not HAS_MOVIEPY:
                 raise ImportError("需要安装 moviepy 才能使用 extract_frame，请执行: pip install moviepy")
+            video_p = self._resolve(video_path)
             clip = VideoFileClip(str(video_p)) if HAS_MOVIEPY else None  # type: ignore
             if clip is None:
                 raise ImportError("MoviePy 未可用")

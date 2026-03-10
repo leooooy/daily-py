@@ -145,14 +145,25 @@ class FileHandler:
         return True
 
     # 备份文件
-    def backup_file(self, file_path: Union[str, Path], backup_dir: Optional[Union[str, Path]] = None) -> Path:
+    def backup_file(self, file_path: Union[str, Path], backup_dir: Optional[Union[str, Path]] = None,
+                    keep_name: bool = False) -> Path:
+        """备份文件到指定目录。
+
+        参数:
+          - file_path: 源文件路径
+          - backup_dir: 备份目录（默认为源文件同级 ``backup/``）
+          - keep_name: 为 True 时保持原文件名，否则添加时间戳后缀
+        """
         f = self._resolve(file_path)
         if not f.exists():
             raise FileNotFoundError(f"文件不存在: {f}")
         bdir = Path(backup_dir) if backup_dir else f.parent / "backup"
         bdir.mkdir(parents=True, exist_ok=True)
-        ts = time.strftime("%Y%m%d_%H%M%S")
-        backup_name = f"{f.stem}_{ts}{f.suffix}"
+        if keep_name:
+            backup_name = f.name
+        else:
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            backup_name = f"{f.stem}_{ts}{f.suffix}"
         backup_path = bdir / backup_name
         shutil.copy2(f, backup_path)
         self.logger.info(f"已创建备份: {f} -> {backup_path}")
@@ -174,6 +185,46 @@ class FileHandler:
                     pass
         return removed
 
+    # 搜索文件（支持大小、时间范围过滤）
+    def search_files(
+        self,
+        directory: Union[str, Path],
+        pattern: str = "*",
+        min_size: Optional[int] = None,
+        max_size: Optional[int] = None,
+        modified_after: Optional[float] = None,
+        modified_before: Optional[float] = None,
+        recursive: bool = False,
+    ) -> List[Path]:
+        """搜索文件，支持 glob 模式、大小范围和修改时间范围过滤。
+
+        参数:
+          - directory: 搜索目录
+          - pattern: glob 模式（如 ``*.txt``）
+          - min_size / max_size: 文件大小范围（字节）
+          - modified_after / modified_before: 修改时间范围（epoch 秒）
+          - recursive: 是否递归子目录
+        """
+        dir_path = self._resolve(directory)
+        if not dir_path.exists():
+            raise FileNotFoundError(f"目录不存在: {dir_path}")
+        matches = dir_path.rglob(pattern) if recursive else dir_path.glob(pattern)
+        results: List[Path] = []
+        for p in sorted(matches):
+            if not p.is_file():
+                continue
+            st = p.stat()
+            if min_size is not None and st.st_size < min_size:
+                continue
+            if max_size is not None and st.st_size > max_size:
+                continue
+            if modified_after is not None and st.st_mtime < modified_after:
+                continue
+            if modified_before is not None and st.st_mtime > modified_before:
+                continue
+            results.append(p)
+        return results
+
     # 查找重复文件（简单基于大小和名称）
     def find_duplicate_files(self, directory: Union[str, Path]) -> Dict[str, List[Path]]:
         dir_path = self._resolve(directory)
@@ -188,8 +239,22 @@ class FileHandler:
                     seen[key] = p
         return dups
 
+    @staticmethod
+    def _is_case_only_rename(old: Path, new: Path) -> bool:
+        """判断是否为仅大小写变更的重命名（Windows 下同路径不同大小写）。"""
+        return str(old).lower() == str(new).lower() and str(old) != str(new)
+
+    @staticmethod
+    def _rename_via_temp(old: Path, new: Path) -> None:
+        """通过临时名中转完成大小写重命名。"""
+        import uuid
+        tmp = old.parent / f"{old.stem}_{uuid.uuid4().hex[:8]}_tmp{old.suffix}"
+        old.rename(tmp)
+        tmp.rename(new)
+
     # 批量重命名
-    def batch_rename(self, directory: Union[str, Path], pattern: str, replacement: str, use_regex: bool = False) -> int:
+    def batch_rename(self, directory: Union[str, Path], pattern: str, replacement: str,
+                     use_regex: bool = False, case_rename: bool = False) -> int:
         import re
         dir_path = self._resolve(directory)
         renamed = 0
@@ -202,7 +267,11 @@ class FileHandler:
                     new_name = old_name.replace(pattern, replacement)
                 if new_name != old_name:
                     new_path = p.parent / new_name
-                    if not new_path.exists():
+                    if case_rename and self._is_case_only_rename(p, new_path):
+                        self._rename_via_temp(p, new_path)
+                        renamed += 1
+                        self.logger.info(f"重命名(大小写): {old_name} -> {new_name}")
+                    elif not new_path.exists():
                         p.rename(new_path)
                         renamed += 1
                         self.logger.info(f"重命名: {old_name} -> {new_name}")
@@ -210,7 +279,7 @@ class FileHandler:
 
     def batch_rename_recursive(self, directory: Union[str, Path], pattern: str, replacement: str,
                                use_regex: bool = False, include_dirs: bool = False,
-                               dry_run: bool = False) -> Dict[str, Any]:
+                               dry_run: bool = False, case_rename: bool = False) -> Dict[str, Any]:
         """递归批量重命名：支持仅文件或同时对文件及目录进行重命名。
 
         参数:
@@ -220,6 +289,7 @@ class FileHandler:
           - use_regex: 是否将 pattern 视为正则表达式
           - include_dirs: 是否对目录名也应用同样的规则
           - dry_run: 仅预览，不实际修改
+          - case_rename: 允许仅大小写变更的重命名（Windows 需要中转临时名）
         返回:
           字典，包含 renamed、skipped、errors 以及计数
         """
@@ -240,6 +310,29 @@ class FileHandler:
             else:
                 return n.replace(pattern, replacement)
 
+        def _do_rename(old: Path, new: Path) -> None:
+            """执行单次重命名，处理大小写和冲突。"""
+            if not old.exists():
+                result["skipped"].append({"path": str(old), "reason": "源文件不存在"})
+                result["count_skipped"] += 1
+                return
+            is_case = self._is_case_only_rename(old, new)
+            if new.exists() and not is_case:
+                result["skipped"].append({"path": str(old), "reason": "目标已存在"})
+                result["count_skipped"] += 1
+                return
+            if is_case and not case_rename:
+                result["skipped"].append({"path": str(old), "reason": "仅大小写变更（未启用大小写重命名）"})
+                result["count_skipped"] += 1
+                return
+            if not dry_run:
+                if is_case:
+                    self._rename_via_temp(old, new)
+                else:
+                    old.rename(new)
+            result["renamed"].append({"old_path": str(old), "new_path": str(new)})
+            result["count_renamed"] += 1
+
         try:
             if include_dirs:
                 # 1) 重命名文件名（递归，深度优先）
@@ -252,18 +345,7 @@ class FileHandler:
                             file_ops.append((p, new_path))
                 file_ops.sort(key=lambda t: len(t[0].parts), reverse=True)
                 for old, new in file_ops:
-                    if not old.exists():
-                        result["skipped"].append({"path": str(old), "reason": "源文件不存在"})
-                        result["count_skipped"] += 1
-                        continue
-                    if new.exists():
-                        result["skipped"].append({"path": str(old), "reason": "目标已存在"})
-                        result["count_skipped"] += 1
-                        continue
-                    if not dry_run:
-                        old.rename(new)
-                    result["renamed"].append({"old_path": str(old), "new_path": str(new)})
-                    result["count_renamed"] += 1
+                    _do_rename(old, new)
 
                 # 2) 重命名目录名（自下而上）
                 dir_ops: List[Tuple[Path, Path]] = []  # list of (old_dir, new_dir)
@@ -276,18 +358,7 @@ class FileHandler:
                             dir_ops.append((d, new_dir))
                 dir_ops.sort(key=lambda t: len(t[0].parts), reverse=True)
                 for old, new in dir_ops:
-                    if not old.exists():
-                        result["skipped"].append({"path": str(old), "reason": "源目录不存在"})
-                        result["count_skipped"] += 1
-                        continue
-                    if new.exists():
-                        result["skipped"].append({"path": str(old), "reason": "目标目录已存在"})
-                        result["count_skipped"] += 1
-                        continue
-                    if not dry_run:
-                        old.rename(new)
-                    result["renamed"].append({"old_path": str(old), "new_path": str(new)})
-                    result["count_renamed"] += 1
+                    _do_rename(old, new)
             else:
                 # 仅对文件名进行递归重命名
                 file_ops = []
@@ -299,18 +370,7 @@ class FileHandler:
                             file_ops.append((p, new_path))
                 file_ops.sort(key=lambda t: len(t[0].parts), reverse=True)
                 for old, new in file_ops:
-                    if not old.exists():
-                        result["skipped"].append({"path": str(old), "reason": "源文件不存在"})
-                        result["count_skipped"] += 1
-                        continue
-                    if new.exists():
-                        result["skipped"].append({"path": str(old), "reason": "目标已存在"})
-                        result["count_skipped"] += 1
-                        continue
-                    if not dry_run:
-                        old.rename(new)
-                    result["renamed"].append({"old_path": str(old), "new_path": str(new)})
-                    result["count_renamed"] += 1
+                    _do_rename(old, new)
         except Exception as e:
             result["errors"].append({"error": str(e)})
             result["count_errors"] += 1
