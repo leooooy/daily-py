@@ -128,7 +128,7 @@ class ImageHandler:
             **_SUBPROCESS_FLAGS,
         )
         if res.returncode == 0 and res.stdout.strip():
-            return _json.loads(res.stdout)
+            return _json.loads(res.stdout, strict=False)
         return None
 
     def _fill_video_info(self, base_info: Dict[str, Any], probe: Dict[str, Any]) -> None:
@@ -252,11 +252,29 @@ class ImageHandler:
         with Image.open(p) as img:
             return img.width, img.height
 
-    # 2) 视频某帧截图
-    def extract_frame(self, video_path: Union[str, Path], time_sec: float, output_path: Optional[Union[str, Path]] = None, backend: str = "auto") -> Path:
-        """从视频中提取指定时间点的一帧，支持本地路径和 URL。"""
+    # 2) 视频某帧截图（按时间）
+    def extract_frame(
+        self,
+        video_path: Union[str, Path],
+        time_sec: float,
+        output_path: Optional[Union[str, Path]] = None,
+        backend: str = "auto",
+        fmt: str = "jpg",
+        quality: int = 5,
+        compression_level: int = 9,
+    ) -> Path:
+        """从视频中提取指定时间点的一帧，支持本地路径和 URL。
+
+        Args:
+            fmt: 输出格式，"jpg" 或 "png"，默认 "jpg"。
+            quality: JPEG 质量（ffmpeg -q:v），范围 2-31，值越小质量越高，默认 5。
+            compression_level: PNG 压缩等级（ffmpeg -compression_level），范围 0-9，默认 9。
+        """
         is_url = self._is_url(str(video_path))
         video_src = str(video_path) if is_url else str(self._resolve(video_path))
+        fmt = fmt.lower().strip(".")
+        if fmt not in ("jpg", "png"):
+            fmt = "jpg"
 
         if backend == "ffmpeg" or (backend == "auto" and self.ffmpeg_available):
             if not self.ffmpeg_available:
@@ -264,11 +282,21 @@ class ImageHandler:
             if output_path:
                 out = Path(output_path)
             elif is_url:
-                out = Path.cwd() / f"frame_{time_sec:.1f}s.png"
+                out = Path.cwd() / f"frame_{time_sec:.1f}s.{fmt}"
             else:
-                out = Path(video_src).with_suffix(".png")
+                out = Path(video_src).with_suffix(f".{fmt}")
             out.parent.mkdir(parents=True, exist_ok=True)
-            cmd = [self._ffmpeg_path, "-y", "-ss", str(time_sec), "-i", video_src, "-frames:v", "1", "-f", "image2", str(out)]
+            cmd = [
+                self._ffmpeg_path, "-y",
+                "-ss", str(time_sec),
+                "-i", video_src,
+                "-frames:v", "1",
+            ]
+            if fmt == "jpg":
+                cmd += ["-q:v", str(quality)]
+            else:
+                cmd += ["-compression_level", str(compression_level)]
+            cmd += ["-f", "image2", str(out)]
             self.logger.info(f"使用 FFmpeg 提取帧: {cmd}")
             res = subprocess.run(
                 cmd,
@@ -290,12 +318,73 @@ class ImageHandler:
             if clip is None:
                 raise ImportError("MoviePy 未可用")
             frame = clip.get_frame(float(time_sec))  # numpy array (H, W, 3)
-            output = Path(output_path) if output_path else Path(video_p).with_suffix(".png")
+            output = Path(output_path) if output_path else Path(video_p).with_suffix(f".{fmt}")
             output.parent.mkdir(parents=True, exist_ok=True)
             Image.fromarray(frame).save(output)
             clip.close()
             self.logger.info(f"已从视频 {video_p} 在 {time_sec}s 处截取帧并保存到 {output}")
             return output
+
+    # 2b) 视频某帧截图（按帧号）
+    def extract_frame_by_number(
+        self,
+        video_path: Union[str, Path],
+        frame_number: int,
+        output_path: Optional[Union[str, Path]] = None,
+        fmt: str = "jpg",
+        quality: int = 5,
+        compression_level: int = 9,
+    ) -> Path:
+        """从视频中提取指定帧号的一帧，支持本地路径和 URL（需要 ffmpeg）。
+
+        使用 ffmpeg 的 select 滤镜精确定位到第 N 帧。
+
+        Args:
+            frame_number: 帧号（从 0 开始）。
+            fmt: 输出格式，"jpg" 或 "png"，默认 "jpg"。
+            quality: JPEG 质量（ffmpeg -q:v），范围 2-31，值越小质量越高，默认 5。
+            compression_level: PNG 压缩等级（ffmpeg -compression_level），范围 0-9，默认 9。
+        """
+        is_url = self._is_url(str(video_path))
+        video_src = str(video_path) if is_url else str(self._resolve(video_path))
+        fmt = fmt.lower().strip(".")
+        if fmt not in ("jpg", "png"):
+            fmt = "jpg"
+
+        if not self.ffmpeg_available:
+            raise RuntimeError("按帧号提取需要 FFmpeg，但未检测到 ffmpeg")
+
+        if output_path:
+            out = Path(output_path)
+        elif is_url:
+            out = Path.cwd() / f"frame_{frame_number}.{fmt}"
+        else:
+            out = Path(video_src).with_suffix(f".{fmt}")
+        out.parent.mkdir(parents=True, exist_ok=True)
+
+        cmd = [
+            self._ffmpeg_path, "-y",
+            "-i", video_src,
+            "-vf", f"select=eq(n\\,{frame_number})",
+            "-frames:v", "1",
+            "-vsync", "vfr",
+        ]
+        if fmt == "jpg":
+            cmd += ["-q:v", str(quality)]
+        else:
+            cmd += ["-compression_level", str(compression_level)]
+        cmd += [str(out)]
+        self.logger.info(f"使用 FFmpeg 按帧号提取: {cmd}")
+        res = subprocess.run(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            **_SUBPROCESS_FLAGS,
+        )
+        if res.returncode != 0 or not out.exists():
+            raise RuntimeError(f"FFmpeg 按帧号提取失败（returncode={res.returncode}）")
+        self.logger.info(f"已从视频 {video_src} 提取第 {frame_number} 帧并保存到 {out}")
+        return out
 
 
     # 3) 获取视频时长（毫秒）

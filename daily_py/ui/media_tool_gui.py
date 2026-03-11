@@ -284,66 +284,269 @@ class MediaToolApp:
         self.notebook.add(tab, text="视频截图")
 
         r = 0
-        ttk.Label(tab, text="视频文件 / URL:").grid(row=r, column=0, sticky="w")
+        # --- 输入模式 ---
+        ttk.Label(tab, text="输入模式:").grid(row=r, column=0, sticky="w")
+        self._e_mode = tk.StringVar(value="file")
+        mode_frame = ttk.Frame(tab)
+        mode_frame.grid(row=r, column=1, sticky="w")
+        ttk.Radiobutton(mode_frame, text="单个文件 / URL", variable=self._e_mode,
+                        value="file", command=self._on_mode_change).pack(side="left")
+        ttk.Radiobutton(mode_frame, text="文件夹批量", variable=self._e_mode,
+                        value="folder", command=self._on_mode_change).pack(side="left", padx=(12, 0))
+
+        r += 1
+        # --- 文件/文件夹路径 ---
+        self._e_path_label = ttk.Label(tab, text="视频文件 / URL:")
+        self._e_path_label.grid(row=r, column=0, sticky="w")
         self._e_video = tk.StringVar()
         ttk.Entry(tab, textvariable=self._e_video, width=60).grid(row=r, column=1, sticky="ew")
-        ttk.Button(tab, text="浏览", command=lambda: self._browse_file(
-            self._e_video, filetypes=_VIDEO_FILETYPES,
-        )).grid(row=r, column=2)
+        btn_frame_path = ttk.Frame(tab)
+        btn_frame_path.grid(row=r, column=2)
+        self._e_browse_file_btn = ttk.Button(btn_frame_path, text="浏览文件",
+                                              command=lambda: self._browse_file(
+                                                  self._e_video, filetypes=_VIDEO_FILETYPES))
+        self._e_browse_file_btn.pack(side="left")
+        self._e_browse_folder_btn = ttk.Button(btn_frame_path, text="浏览文件夹",
+                                                command=self._browse_folder_for_extract)
+        self._e_browse_folder_btn.pack(side="left", padx=(2, 0))
 
         r += 1
-        ttk.Label(tab, text="截取时间（秒）:").grid(row=r, column=0, sticky="w")
-        self._e_time = tk.StringVar(value="1.0")
-        ttk.Entry(tab, textvariable=self._e_time, width=15).grid(row=r, column=1, sticky="w")
+        # --- 递归选项（仅文件夹模式） ---
+        self._e_recursive = tk.BooleanVar(value=False)
+        self._e_recursive_chk = ttk.Checkbutton(tab, text="递归子文件夹",
+                                                  variable=self._e_recursive)
+        self._e_recursive_chk.grid(row=r, column=1, sticky="w")
 
         r += 1
-        ttk.Label(tab, text="输出路径:").grid(row=r, column=0, sticky="w")
+        # --- 截取方式 ---
+        ttk.Label(tab, text="截取方式:").grid(row=r, column=0, sticky="w")
+        self._e_capture_mode = tk.StringVar(value="time")
+        cap_frame = ttk.Frame(tab)
+        cap_frame.grid(row=r, column=1, sticky="w")
+        ttk.Radiobutton(cap_frame, text="按时间（秒）", variable=self._e_capture_mode,
+                        value="time", command=self._on_capture_mode_change).pack(side="left")
+        ttk.Radiobutton(cap_frame, text="按帧号", variable=self._e_capture_mode,
+                        value="frame", command=self._on_capture_mode_change).pack(side="left", padx=(12, 0))
+
+        r += 1
+        self._e_value_label = ttk.Label(tab, text="截取时间（秒）:")
+        self._e_value_label.grid(row=r, column=0, sticky="w")
+        self._e_value = tk.StringVar(value="0.5")
+        ttk.Entry(tab, textvariable=self._e_value, width=15).grid(row=r, column=1, sticky="w")
+
+        r += 1
+        # --- 输出格式 ---
+        ttk.Label(tab, text="输出格式:").grid(row=r, column=0, sticky="w")
+        fmt_frame = ttk.Frame(tab)
+        fmt_frame.grid(row=r, column=1, sticky="w")
+        self._e_fmt = tk.StringVar(value="jpg")
+        ttk.Radiobutton(fmt_frame, text="JPG", variable=self._e_fmt, value="jpg").pack(side="left")
+        ttk.Radiobutton(fmt_frame, text="PNG", variable=self._e_fmt, value="png").pack(side="left", padx=(12, 0))
+
+        r += 1
+        # --- 图片质量 ---
+        quality_frame = ttk.Frame(tab)
+        quality_frame.grid(row=r, column=1, sticky="w")
+        ttk.Label(quality_frame, text="JPG 质量 (-q:v):").pack(side="left")
+        self._e_quality = tk.StringVar(value="5")
+        ttk.Entry(quality_frame, textvariable=self._e_quality, width=5).pack(side="left", padx=(4, 0))
+        ttk.Label(quality_frame, text="  PNG 压缩 (-compression_level):").pack(side="left", padx=(12, 0))
+        self._e_compress = tk.StringVar(value="9")
+        ttk.Entry(quality_frame, textvariable=self._e_compress, width=5).pack(side="left", padx=(4, 0))
+
+        r += 1
+        # --- 输出路径（仅单文件模式） ---
+        self._e_output_label = ttk.Label(tab, text="输出路径:")
+        self._e_output_label.grid(row=r, column=0, sticky="w")
         self._e_output = tk.StringVar()
-        ttk.Entry(tab, textvariable=self._e_output, width=60).grid(row=r, column=1, sticky="ew")
-        ttk.Button(tab, text="浏览", command=lambda: self._browse_save(
-            self._e_output, defaultextension=".png",
-            filetypes=[("PNG", "*.png"), ("JPEG", "*.jpg"), ("所有文件", "*.*")],
-        )).grid(row=r, column=2)
+        self._e_output_entry = ttk.Entry(tab, textvariable=self._e_output, width=60)
+        self._e_output_entry.grid(row=r, column=1, sticky="ew")
+        self._e_output_browse_btn = ttk.Button(tab, text="浏览", command=lambda: self._browse_save(
+            self._e_output, defaultextension=".jpg",
+            filetypes=[("JPEG", "*.jpg"), ("PNG", "*.png"), ("所有文件", "*.*")],
+        ))
+        self._e_output_browse_btn.grid(row=r, column=2)
 
         r += 1
-        ttk.Label(tab, text="(留空则自动生成: 视频同目录下 frame_时间.png)").grid(
-            row=r, column=1, sticky="w")
+        self._e_output_hint = ttk.Label(tab, text="(留空则自动生成: 视频同名.jpg)")
+        self._e_output_hint.grid(row=r, column=1, sticky="w")
 
         r += 1
-        ttk.Button(tab, text="截取", command=self._do_extract).grid(row=r, column=0, columnspan=2, pady=8, sticky="w")
+        ttk.Button(tab, text="截取", command=self._do_extract).grid(
+            row=r, column=0, columnspan=2, pady=8, sticky="w")
 
         tab.columnconfigure(1, weight=1)
 
+        # 初始化 UI 状态
+        self._on_mode_change()
+
+    def _on_mode_change(self) -> None:
+        """切换单文件/文件夹模式时更新 UI。"""
+        is_folder = self._e_mode.get() == "folder"
+        if is_folder:
+            self._e_path_label.config(text="视频文件夹:")
+            self._e_browse_file_btn.pack_forget()
+            self._e_browse_folder_btn.pack(side="left")
+            self._e_recursive_chk.grid()
+            # 文件夹模式下隐藏单文件输出路径
+            self._e_output_label.grid_remove()
+            self._e_output_entry.grid_remove()
+            self._e_output_browse_btn.grid_remove()
+            self._e_output_hint.config(text="(输出到各视频同目录，与视频同名)")
+            self._e_output_hint.grid()
+        else:
+            self._e_path_label.config(text="视频文件 / URL:")
+            self._e_browse_folder_btn.pack_forget()
+            self._e_browse_file_btn.pack(side="left")
+            self._e_recursive_chk.grid_remove()
+            self._e_output_label.grid()
+            self._e_output_entry.grid()
+            self._e_output_browse_btn.grid()
+            self._e_output_hint.config(text="(留空则自动生成: 视频同名.jpg)")
+            self._e_output_hint.grid()
+
+    def _on_capture_mode_change(self) -> None:
+        """切换按时间/按帧号时更新标签。"""
+        if self._e_capture_mode.get() == "time":
+            self._e_value_label.config(text="截取时间（秒）:")
+            self._e_value.set("0.5")
+        else:
+            self._e_value_label.config(text="截取帧号:")
+            self._e_value.set("5")
+
+    def _browse_folder_for_extract(self) -> None:
+        d = filedialog.askdirectory()
+        if d:
+            self._e_video.set(d)
+
+    def _get_extract_params(self):
+        """解析并返回截图参数字典，出错返回 None。"""
+        fmt = self._e_fmt.get()
+        try:
+            quality = int(self._e_quality.get().strip())
+        except ValueError:
+            messagebox.showerror("输入错误", "JPG 质量必须是整数。")
+            return None
+        try:
+            compression = int(self._e_compress.get().strip())
+        except ValueError:
+            messagebox.showerror("输入错误", "PNG 压缩等级必须是整数。")
+            return None
+
+        capture_mode = self._e_capture_mode.get()
+        val_str = self._e_value.get().strip()
+        if capture_mode == "time":
+            try:
+                value = float(val_str)
+            except ValueError:
+                messagebox.showerror("输入错误", "截取时间必须是数字（秒）。")
+                return None
+        else:
+            try:
+                value = int(val_str)
+            except ValueError:
+                messagebox.showerror("输入错误", "帧号必须是整数。")
+                return None
+
+        return {
+            "capture_mode": capture_mode,
+            "value": value,
+            "fmt": fmt,
+            "quality": quality,
+            "compression_level": compression,
+        }
+
     def _do_extract(self) -> None:
-        video = self._e_video.get().strip()
-        if not video:
-            messagebox.showerror("输入错误", "请输入视频文件路径或 URL。")
+        path = self._e_video.get().strip()
+        if not path:
+            messagebox.showerror("输入错误", "请输入视频文件路径、URL 或文件夹。")
             return
         if not self._ih:
             messagebox.showerror("错误", "ImageHandler 不可用，无法截取帧。")
             return
-        try:
-            time_sec = float(self._e_time.get().strip())
-        except ValueError:
-            messagebox.showerror("输入错误", "截取时间必须是数字（秒）。")
+
+        params = self._get_extract_params()
+        if params is None:
             return
 
-        output = self._e_output.get().strip()
-        if not output:
-            if _is_url(video):
-                output = str(Path.cwd() / f"frame_{time_sec:.1f}s.png")
-            else:
-                vp = Path(video)
-                output = str(vp.parent / f"frame_{time_sec:.1f}s.png")
-            self._e_output.set(output)
+        mode = self._e_mode.get()
+        if mode == "folder":
+            recursive = self._e_recursive.get()
+            self._run_threaded(self._extract_folder_worker, path, recursive, params)
+        else:
+            output = self._e_output.get().strip()
+            self._run_threaded(self._extract_single_worker, path, output, params)
 
-        self._run_threaded(self._extract_worker, video, time_sec, output)
+    def _auto_output_path(self, video_src: str, params: dict) -> str:
+        """根据视频路径自动生成输出路径：视频同名 + 指定后缀。"""
+        fmt = params["fmt"]
+        if _is_url(video_src):
+            from urllib.parse import urlparse
+            url_path = urlparse(video_src).path
+            stem = Path(url_path).stem or "frame"
+            return str(Path.cwd() / f"{stem}.{fmt}")
+        else:
+            return str(Path(video_src).with_suffix(f".{fmt}"))
 
-    def _extract_worker(self, video: str, time_sec: float, output: str) -> None:
-        self._log(f"截取视频帧: {video} @ {time_sec}s -> {output}")
-        result = self._ih.extract_frame(video, time_sec, output)
+    def _do_extract_one(self, video_src: str, output: str, params: dict) -> None:
+        """执行单个视频的截图（在工作线程中调用）。"""
+        cap_mode = params["capture_mode"]
+        fmt = params["fmt"]
+        quality = params["quality"]
+        compression = params["compression_level"]
+
+        if cap_mode == "time":
+            time_sec = params["value"]
+            self._log(f"截取: {video_src} @ {time_sec}s -> {output}")
+            result = self._ih.extract_frame(
+                video_src, time_sec, output,
+                fmt=fmt, quality=quality, compression_level=compression,
+            )
+        else:
+            frame_num = params["value"]
+            self._log(f"截取: {video_src} 第{frame_num}帧 -> {output}")
+            result = self._ih.extract_frame_by_number(
+                video_src, frame_num, output,
+                fmt=fmt, quality=quality, compression_level=compression,
+            )
         size = result.stat().st_size if result.exists() else 0
-        self._log(f"截取完成: {result} ({_fmt_size(size)})")
+        self._log(f"  完成: {result} ({_fmt_size(size)})")
+
+    def _extract_single_worker(self, video: str, output: str, params: dict) -> None:
+        if not output:
+            output = self._auto_output_path(video, params)
+            self.master.after(0, lambda: self._e_output.set(output))
+        self._do_extract_one(video, output, params)
+
+    def _extract_folder_worker(self, folder: str, recursive: bool, params: dict) -> None:
+        folder_path = Path(folder)
+        if not folder_path.is_dir():
+            self._log(f"错误: {folder} 不是有效的文件夹路径")
+            return
+
+        video_exts = {".mp4", ".avi", ".mkv", ".mov", ".wmv", ".flv", ".webm",
+                      ".m4v", ".ts", ".mpg", ".mpeg", ".3gp"}
+        if recursive:
+            files = [f for f in folder_path.rglob("*") if f.suffix.lower() in video_exts]
+        else:
+            files = [f for f in folder_path.iterdir() if f.is_file() and f.suffix.lower() in video_exts]
+
+        files.sort()
+        if not files:
+            self._log(f"文件夹中未找到视频文件: {folder}")
+            return
+
+        self._log(f"找到 {len(files)} 个视频文件，开始批量截图...")
+        success, fail = 0, 0
+        for f in files:
+            output = self._auto_output_path(str(f), params)
+            try:
+                self._do_extract_one(str(f), output, params)
+                success += 1
+            except Exception as exc:
+                self._log(f"  失败: {f.name} - {exc}")
+                fail += 1
+        self._log(f"批量截图完成: 成功 {success}，失败 {fail}")
 
 
 def main():
