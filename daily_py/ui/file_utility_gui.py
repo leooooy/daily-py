@@ -340,24 +340,70 @@ class FileUtilityApp:
         ttk.Entry(tab, textvariable=self._b_dst, width=55).grid(row=r, column=1, sticky="ew")
         ttk.Button(tab, text="浏览", command=lambda: self._browse_dir(self._b_dst)).grid(row=r, column=2)
 
+        # 选项行：递归 + 保留层级 + 保持原名
         r += 1
-        ttk.Label(tab, text="文件匹配:").grid(row=r, column=0, sticky="w")
-        self._b_filter = tk.StringVar(value="*")
-        filter_frm = ttk.Frame(tab)
-        filter_frm.grid(row=r, column=1, sticky="ew")
-        ttk.Combobox(filter_frm, textvariable=self._b_filter, values=self._BACKUP_EXT_PRESETS,
-                      width=12).pack(side="left")
-        ttk.Label(filter_frm, text="  (可手动输入，如 *.mp3 或 *.py)").pack(side="left")
+        opt_frm = ttk.Frame(tab)
+        opt_frm.grid(row=r, column=0, columnspan=3, sticky="w")
+        self._b_recursive = tk.BooleanVar(value=True)
+        ttk.Checkbutton(opt_frm, text="递归子目录", variable=self._b_recursive).pack(side="left", padx=(0, 12))
+        self._b_preserve_structure = tk.BooleanVar(value=True)
+        ttk.Checkbutton(opt_frm, text="保留目录层级", variable=self._b_preserve_structure).pack(side="left", padx=(0, 12))
+        self._b_keep_name = tk.BooleanVar(value=True)
+        ttk.Checkbutton(opt_frm, text="保持原文件名（不加时间戳）", variable=self._b_keep_name).pack(side="left")
 
+        # 多条件文件匹配
         r += 1
-        self._b_keep_name = tk.BooleanVar(value=False)
-        ttk.Checkbutton(tab, text="保持原文件名（不加时间戳后缀）", variable=self._b_keep_name).grid(
-            row=r, column=0, columnspan=2, sticky="w")
+        filter_lf = ttk.LabelFrame(tab, text="文件匹配条件", padding=4)
+        filter_lf.grid(row=r, column=0, columnspan=3, sticky="ew", pady=(4, 0))
+
+        # 逻辑组合选择
+        logic_frm = ttk.Frame(filter_lf)
+        logic_frm.pack(fill="x")
+        ttk.Label(logic_frm, text="多条件组合:").pack(side="left")
+        self._b_logic = tk.StringVar(value="OR")
+        ttk.Radiobutton(logic_frm, text="OR（满足任一条件）", variable=self._b_logic, value="OR").pack(side="left", padx=(8, 12))
+        ttk.Radiobutton(logic_frm, text="AND（同时满足所有条件）", variable=self._b_logic, value="AND").pack(side="left")
+
+        # 条件列表
+        cond_frm = ttk.Frame(filter_lf)
+        cond_frm.pack(fill="x", pady=(4, 0))
+
+        self._b_conditions: List[tk.StringVar] = []
+        self._b_cond_frame = ttk.Frame(cond_frm)
+        self._b_cond_frame.pack(fill="x", side="left", expand=True)
+
+        btn_frm2 = ttk.Frame(cond_frm)
+        btn_frm2.pack(side="right")
+        ttk.Button(btn_frm2, text="+", width=3, command=self._backup_add_condition).pack(pady=1)
+        ttk.Button(btn_frm2, text="-", width=3, command=self._backup_remove_condition).pack(pady=1)
+
+        # 添加第一个默认条件
+        self._backup_add_condition()
 
         r += 1
         ttk.Button(tab, text="创建备份", command=self._do_backup).grid(row=r, column=0, columnspan=2, pady=8)
 
         tab.columnconfigure(1, weight=1)
+
+    def _backup_add_condition(self) -> None:
+        """添加一个文件匹配条件输入行。"""
+        var = tk.StringVar(value="*")
+        self._b_conditions.append(var)
+        row_frm = ttk.Frame(self._b_cond_frame)
+        row_frm.pack(fill="x", pady=1)
+        ttk.Label(row_frm, text=f"条件{len(self._b_conditions)}:").pack(side="left")
+        cb = ttk.Combobox(row_frm, textvariable=var, values=self._BACKUP_EXT_PRESETS, width=18)
+        cb.pack(side="left", padx=4)
+        ttk.Label(row_frm, text="(glob 模式，如 *.mp3)").pack(side="left")
+
+    def _backup_remove_condition(self) -> None:
+        """移除最后一个匹配条件（至少保留一个）。"""
+        if len(self._b_conditions) <= 1:
+            return
+        self._b_conditions.pop()
+        children = self._b_cond_frame.winfo_children()
+        if children:
+            children[-1].destroy()
 
     def _do_backup(self) -> None:
         src = self._b_src.get().strip()
@@ -366,22 +412,59 @@ class FileUtilityApp:
             return
         self._run_threaded(self._backup_worker, src)
 
+    def _match_conditions(self, filepath: Path, patterns: List[str], logic: str) -> bool:
+        """根据多条件和逻辑组合判断文件是否匹配。"""
+        if not patterns:
+            return True
+        from fnmatch import fnmatch
+        results = [fnmatch(filepath.name, pat) for pat in patterns]
+        return all(results) if logic == "AND" else any(results)
+
     def _backup_worker(self, src: str) -> None:
         dst = self._b_dst.get().strip() or None
         keep_name = self._b_keep_name.get()
-        pattern = self._b_filter.get().strip() or "*"
+        recursive = self._b_recursive.get()
+        preserve = self._b_preserve_structure.get()
+        logic = self._b_logic.get()
+        patterns = [v.get().strip() for v in self._b_conditions if v.get().strip()]
+        if not patterns:
+            patterns = ["*"]
+
         p = Path(src)
         if p.is_file():
             bp = self.fh.backup_file(src, dst, keep_name=keep_name)
             self._log(f"已备份: {src} -> {bp}")
         elif p.is_dir():
-            files = self.fh.list_files(src, pattern)
-            self._log(f"备份目录: {src}  匹配={pattern}  共 {len(files)} 个文件  保持原名={keep_name}")
+            # 收集文件
+            if recursive:
+                all_files = sorted(f for f in p.rglob("*") if f.is_file())
+            else:
+                all_files = sorted(f for f in p.iterdir() if f.is_file())
+
+            # 多条件过滤
+            files = [f for f in all_files if self._match_conditions(f, patterns, logic)]
+
+            cond_desc = f" {logic} ".join(patterns)
+            self._log(
+                f"备份目录: {src}  条件=[{cond_desc}]  递归={recursive}  "
+                f"保留层级={preserve}  保持原名={keep_name}  共 {len(files)} 个文件"
+            )
+
+            dst_base = Path(dst) if dst else p / "backup"
+            dst_base.mkdir(parents=True, exist_ok=True)
+
             count = 0
             for f in files:
                 try:
-                    bp = self.fh.backup_file(str(f), dst, keep_name=keep_name)
-                    self._log(f"  {f.name} -> {bp}")
+                    if preserve:
+                        rel = f.relative_to(p)
+                        target_dir = dst_base / rel.parent
+                        target_dir.mkdir(parents=True, exist_ok=True)
+                    else:
+                        target_dir = dst_base
+
+                    bp = self.fh.backup_file(str(f), str(target_dir), keep_name=keep_name)
+                    self._log(f"  {f.relative_to(p)} -> {bp}")
                     count += 1
                 except Exception as exc:
                     self._log(f"  错误 ({f.name}): {exc}")

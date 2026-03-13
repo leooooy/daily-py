@@ -9,9 +9,11 @@
 try:
     from .connection import DBConnection
     from .base_repository import BaseRepository
+    from .models.media_resource import MediaResource
     from .models.media_video import MediaVideo
     from .models.toy_model_video import ToyModelVideo
     from .models.xfan_video import XfanVideo
+    from .repositories.media_resource_repository import MediaResourceRepository
     from .repositories.media_video_repository import MediaVideoRepository
     from .repositories.toy_model_video_repository import ToyModelVideoRepository
     from .repositories.xfan_video_repository import XfanVideoRepository
@@ -20,8 +22,10 @@ try:
     __all__ = [
         "DBConnection",
         "BaseRepository",
+        "MediaResource",
         "MediaVideo",
         "ToyModelVideo",
+        "MediaResourceRepository",
         "MediaVideoRepository",
         "ToyModelVideoRepository",
         "XfanVideo",
