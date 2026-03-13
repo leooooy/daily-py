@@ -8,7 +8,7 @@
 
 Usage::
 
-    python -m daily_py.services.recommond.downloader D:/recommond_output --env prod
+    python -m daily_py.services.recommond.scripts.resource_batch_download D:/recommond_output --env prod
 """
 
 from __future__ import annotations

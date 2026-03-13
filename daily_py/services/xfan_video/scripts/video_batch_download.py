@@ -5,7 +5,7 @@
 
 Usage::
 
-    python -m daily_py.services.xfan_video.downloader D:/downloads/xfan --env prod
+    python -m daily_py.services.xfan_video.scripts.video_batch_download D:/downloads/xfan --env prod
 
 URL 示例::
 

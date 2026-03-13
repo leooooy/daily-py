@@ -1,6 +1,6 @@
 """XfanVideo 业务仓库。"""
 
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from ..base_repository import BaseRepository
 from ..models.xfan_video import XfanVideo
@@ -56,3 +56,48 @@ class XfanVideoRepository(BaseRepository[XfanVideo]):
             params=(1,),
             order_by="id ASC",
         )
+
+    # ------------------------------------------------------------------
+    # 管理查询
+    # ------------------------------------------------------------------
+
+    def find_all_admin(
+        self,
+        page: int = 1,
+        page_size: int = 50,
+        deleted_flag: Optional[int] = None,
+        background: Optional[int] = None,
+        keyword: str = "",
+    ) -> Tuple[List[XfanVideo], int]:
+        """管理员分页查询，支持按删除状态、background、关键词过滤，按 id 降序。"""
+        conditions: list = []
+        params: list = []
+        if deleted_flag is not None:
+            conditions.append("deleted_flag = %s")
+            params.append(deleted_flag)
+        if background is not None:
+            conditions.append("background = %s")
+            params.append(background)
+        if keyword:
+            conditions.append("(title LIKE %s OR video_url LIKE %s)")
+            params.extend([f"%{keyword}%", f"%{keyword}%"])
+        where = " AND ".join(conditions) if conditions else None
+        return self.find_page(
+            page=page,
+            page_size=page_size,
+            where=where,
+            params=tuple(params) if params else None,
+            order_by="id DESC",
+        )
+
+    # ------------------------------------------------------------------
+    # 软删除 / 恢复
+    # ------------------------------------------------------------------
+
+    def soft_delete(self, video_id: int) -> int:
+        """软删除：将 deleted_flag 置为 -1，返回受影响行数。"""
+        return self.update_fields(video_id, deleted_flag=-1)
+
+    def restore(self, video_id: int) -> int:
+        """恢复：将 deleted_flag 置为 1，返回受影响行数。"""
+        return self.update_fields(video_id, deleted_flag=1)

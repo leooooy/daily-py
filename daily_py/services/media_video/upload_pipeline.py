@@ -5,7 +5,7 @@ MediaVideoUploader，无需手动组装依赖。
 
 Example::
 
-    from daily_py.services.media_video.pipeline import MediaVideoPipeline
+    from daily_py.services.media_video.upload_pipeline import MediaVideoPipeline
 
     # 测试环境（默认）
     pipeline = MediaVideoPipeline(env="test")
@@ -20,7 +20,7 @@ Example::
 
 CLI::
 
-    python -m daily_py.services.media_video.pipeline D:/videos --env test --recursive
+    python -m daily_py.services.media_video.upload_pipeline D:/videos --env test --recursive
 """
 
 import logging
@@ -32,7 +32,7 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from daily_py.services.media_video.uploader import MediaVideoUploader, UploadResult
+from daily_py.services.media_video.media_file_upload import MediaVideoUploader, UploadResult
 
 
 def _setup_logging() -> None:
@@ -202,7 +202,7 @@ class MediaVideoPipeline:
 
 
 # ---------------------------------------------------------------------------
-# CLI 入口：python -m daily_py.services.media_video.pipeline <folder> [options]
+# CLI 入口：python -m daily_py.services.media_video.upload_pipeline <folder> [options]
 # ---------------------------------------------------------------------------
 
 def _main() -> None:

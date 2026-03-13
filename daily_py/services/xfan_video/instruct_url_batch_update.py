@@ -6,7 +6,7 @@
 
 Usage::
 
-    python -m daily_py.services.xfan_video.instruct_updater D:/json_files --env prod
+    python -m daily_py.services.xfan_video.instruct_url_batch_update D:/json_files --env prod
 
 示例::
 

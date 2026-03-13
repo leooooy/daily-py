@@ -376,7 +376,7 @@ class MediaUploadApp:
         sys.stdout = _StdoutToQueue(self._log_queue)  # type: ignore[assignment]
 
         try:
-            from daily_py.services.media_video.pipeline import MediaVideoPipeline
+            from daily_py.services.media_video.upload_pipeline import MediaVideoPipeline
 
             # 上传前清空历史数据（仅 test 环境，dry_run 时跳过）
             if clear_history and not dry_run:

@@ -14,7 +14,7 @@ Example::
     from daily_py.db.config import create_connection
     from daily_py.db.repositories.media_video_repository import MediaVideoRepository
     from daily_py.s3.config import create_uploader
-    from daily_py.services.media_video.uploader import MediaVideoUploader
+    from daily_py.services.media_video.media_file_upload import MediaVideoUploader
 
     db   = create_connection("prod")
     repo = MediaVideoRepository(db)

@@ -6,7 +6,7 @@
 
 Usage::
 
-    python -m daily_py.services.xfan_video.background_checker D:/videos --env prod
+    python -m daily_py.services.xfan_video.scripts.background_video_checker D:/videos --env prod
 """
 
 from __future__ import annotations

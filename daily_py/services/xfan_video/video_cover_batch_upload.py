@@ -11,7 +11,7 @@
 
 Usage::
 
-    python -m daily_py.services.xfan_video.uploader D:/xfan_files --env prod
+    python -m daily_py.services.xfan_video.video_cover_batch_upload D:/xfan_files --env prod
 """
 
 from __future__ import annotations

@@ -6,7 +6,7 @@
 
 Usage::
 
-    python -m daily_py.services.novel.audio_updater D:/mp3_files --env prod
+    python -m daily_py.services.novel.audio_url_batch_update D:/mp3_files --env prod
 """
 
 from __future__ import annotations
