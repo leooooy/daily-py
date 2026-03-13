@@ -285,6 +285,11 @@ class ImageHandler:
                 out = Path.cwd() / f"frame_{time_sec:.1f}s.{fmt}"
             else:
                 out = Path(video_src).with_suffix(f".{fmt}")
+
+            if out.exists():
+                self.logger.info(f"目标文件已存在，跳过截取：{out}")
+                return out
+
             out.parent.mkdir(parents=True, exist_ok=True)
             cmd = [
                 self._ffmpeg_path, "-y",
