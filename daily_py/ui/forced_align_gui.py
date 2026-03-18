@@ -68,6 +68,8 @@ class ForcedAlignApp:
                         value="single", command=self._on_mode_change).pack(side="left")
         ttk.Radiobutton(mode_f, text="批量文件夹", variable=self._mode,
                         value="batch", command=self._on_mode_change).pack(side="left", padx=(12, 0))
+        ttk.Radiobutton(mode_f, text="预切割合并", variable=self._mode,
+                        value="presplit", command=self._on_mode_change).pack(side="left", padx=(12, 0))
 
         # --- 单文件输入 ---
         r += 1
@@ -109,6 +111,17 @@ class ForcedAlignApp:
                                          command=lambda: self._browse_dir(self._v_text_dir))
         self._btn_text_dir.grid(row=r, column=2)
 
+        # --- 预切割合并输入 ---
+        r += 1
+        self._lbl_presplit = ttk.Label(form, text="预切割文件夹:")
+        self._lbl_presplit.grid(row=r, column=0, sticky="w")
+        self._v_presplit = tk.StringVar()
+        self._ent_presplit = ttk.Entry(form, textvariable=self._v_presplit, width=60)
+        self._ent_presplit.grid(row=r, column=1, sticky="ew")
+        self._btn_presplit = ttk.Button(form, text="浏览",
+                                         command=lambda: self._browse_dir(self._v_presplit))
+        self._btn_presplit.grid(row=r, column=2)
+
         # --- 输出目录 ---
         r += 1
         ttk.Label(form, text="输出目录:").grid(row=r, column=0, sticky="w")
@@ -122,12 +135,24 @@ class ForcedAlignApp:
         ttk.Label(form, text="输出格式:").grid(row=r, column=0, sticky="w")
         fmt_f = ttk.Frame(form)
         fmt_f.grid(row=r, column=1, sticky="w")
-        self._fmt_json = tk.BooleanVar(value=True)
+        self._fmt_asr = tk.BooleanVar(value=True)
+        self._fmt_json = tk.BooleanVar(value=False)
         self._fmt_srt = tk.BooleanVar(value=False)
         self._fmt_vtt = tk.BooleanVar(value=False)
-        ttk.Checkbutton(fmt_f, text="JSON", variable=self._fmt_json).pack(side="left")
+        ttk.Checkbutton(fmt_f, text="JSON(读取音频)", variable=self._fmt_asr,
+                         command=self._on_fmt_change).pack(side="left")
+        ttk.Checkbutton(fmt_f, text="JSON", variable=self._fmt_json).pack(side="left", padx=(12, 0))
         ttk.Checkbutton(fmt_f, text="SRT", variable=self._fmt_srt).pack(side="left", padx=(12, 0))
         ttk.Checkbutton(fmt_f, text="VTT", variable=self._fmt_vtt).pack(side="left", padx=(12, 0))
+
+        # --- ASR 引导对齐 ---
+        r += 1
+        self._asr_guided = tk.BooleanVar(value=False)
+        self._chk_asr_guided = ttk.Checkbutton(
+            form, text="ASR 引导对齐（长音频推荐：ASR识别→强制对齐→映射回原文）",
+            variable=self._asr_guided, command=self._on_fmt_change,
+        )
+        self._chk_asr_guided.grid(row=r, column=0, columnspan=3, sticky="w")
 
         # --- SRT 每行字数 ---
         r += 1
@@ -145,13 +170,21 @@ class ForcedAlignApp:
             ttk.Radiobutton(lang_f, text=lang, variable=self._v_lang,
                             value=lang).pack(side="left", padx=(0, 8))
 
-        # --- 模型路径 ---
+        # --- 对齐模型路径 ---
         r += 1
-        ttk.Label(form, text="模型路径:").grid(row=r, column=0, sticky="w")
-        # Qwen/Qwen3-ForcedAligner-0.6B：从 HuggingFace Hub 下载（首次联网，之后走 ~/.cache/huggingface/hub/ 缓存）
-        # D:\my_models\Qwen3-ForcedAligner-0.6B：直接加载本地文件，不联网
-        self._v_model = tk.StringVar(value="D:\my_models\Qwen3-ForcedAligner-0.6B")
-        ttk.Entry(form, textvariable=self._v_model, width=60).grid(row=r, column=1, sticky="ew")
+        self._lbl_model = ttk.Label(form, text="对齐模型路径:")
+        self._lbl_model.grid(row=r, column=0, sticky="w")
+        self._v_model = tk.StringVar(value="D:\\my_models\\Qwen3-ForcedAligner-0.6B")
+        self._ent_model = ttk.Entry(form, textvariable=self._v_model, width=60)
+        self._ent_model.grid(row=r, column=1, sticky="ew")
+
+        # --- ASR 模型路径 ---
+        r += 1
+        self._lbl_asr_model = ttk.Label(form, text="ASR 模型路径:")
+        self._lbl_asr_model.grid(row=r, column=0, sticky="w")
+        self._v_asr_model = tk.StringVar(value="D:\\my_models\\Qwen3-ASR-0.6B")
+        self._ent_asr_model = ttk.Entry(form, textvariable=self._v_asr_model, width=60)
+        self._ent_asr_model.grid(row=r, column=1, sticky="ew")
 
         # --- 开始按钮 ---
         r += 1
@@ -160,6 +193,7 @@ class ForcedAlignApp:
 
         # 初始化 UI 状态
         self._on_mode_change()
+        self._on_fmt_change()
 
     # ------------------------------------------------------------------
     # 日志区
@@ -256,22 +290,51 @@ class ForcedAlignApp:
     # 模式切换
     # ------------------------------------------------------------------
 
+    def _is_asr_only(self) -> bool:
+        """仅选中 JSON(读取音频) 时为 ASR 模式，不需要文本输入。"""
+        return (self._fmt_asr.get()
+                and not self._fmt_json.get()
+                and not self._fmt_srt.get()
+                and not self._fmt_vtt.get())
+
+    def _on_fmt_change(self) -> None:
+        self._on_mode_change()
+        # ASR 模型路径：ASR-only 或 ASR 引导模式都需要
+        need_asr = self._fmt_asr.get() or self._asr_guided.get()
+        if need_asr:
+            self._lbl_asr_model.grid()
+            self._ent_asr_model.grid()
+        else:
+            self._lbl_asr_model.grid_remove()
+            self._ent_asr_model.grid_remove()
+
     def _on_mode_change(self) -> None:
-        is_batch = self._mode.get() == "batch"
-        # 单文件控件
+        mode = self._mode.get()
+        asr_only = self._is_asr_only()
+
+        # 隐藏所有输入控件，再按模式显示
         for w in (self._lbl_audio, self._ent_audio, self._btn_audio,
-                  self._lbl_text, self._ent_text, self._btn_text):
-            if is_batch:
-                w.grid_remove()
-            else:
+                  self._lbl_text, self._ent_text, self._btn_text,
+                  self._lbl_audio_dir, self._ent_audio_dir, self._btn_audio_dir,
+                  self._lbl_text_dir, self._ent_text_dir, self._btn_text_dir,
+                  self._lbl_presplit, self._ent_presplit, self._btn_presplit):
+            w.grid_remove()
+
+        if mode == "single":
+            for w in (self._lbl_audio, self._ent_audio, self._btn_audio):
                 w.grid()
-        # 批量控件
-        for w in (self._lbl_audio_dir, self._ent_audio_dir, self._btn_audio_dir,
-                  self._lbl_text_dir, self._ent_text_dir, self._btn_text_dir):
-            if is_batch:
+            if not asr_only:
+                for w in (self._lbl_text, self._ent_text, self._btn_text):
+                    w.grid()
+        elif mode == "batch":
+            for w in (self._lbl_audio_dir, self._ent_audio_dir, self._btn_audio_dir):
                 w.grid()
-            else:
-                w.grid_remove()
+            if not asr_only:
+                for w in (self._lbl_text_dir, self._ent_text_dir, self._btn_text_dir):
+                    w.grid()
+        elif mode == "presplit":
+            for w in (self._lbl_presplit, self._ent_presplit, self._btn_presplit):
+                w.grid()
 
     # ------------------------------------------------------------------
     # 执行对齐
@@ -297,6 +360,44 @@ class ForcedAlignApp:
             messagebox.showerror("输入错误", "请指定输出目录。")
             return
 
+        language = self._v_lang.get().strip()
+        model = self._v_model.get().strip()
+        asr_model = self._v_asr_model.get().strip()
+        use_asr = self._fmt_asr.get()
+
+        # ASR 模式：仅需音频
+        if self._is_asr_only():
+            if self._mode.get() == "batch":
+                audio_dir = self._v_audio_dir.get().strip()
+                if not audio_dir:
+                    messagebox.showerror("输入错误", "请指定音频文件夹。")
+                    return
+                self._run_threaded(
+                    self._batch_asr_worker, audio_dir, output_dir,
+                    model, asr_model, language,
+                )
+            else:
+                audio = self._v_audio.get().strip()
+                if not audio:
+                    messagebox.showerror("输入错误", "请指定音频文件。")
+                    return
+                self._run_threaded(
+                    self._single_asr_worker, audio, output_dir,
+                    model, asr_model, language,
+                )
+            return
+
+        # 预切割合并模式
+        if self._mode.get() == "presplit":
+            presplit_dir = self._v_presplit.get().strip()
+            if not presplit_dir:
+                messagebox.showerror("输入错误", "请指定预切割文件夹。")
+                return
+            self._run_threaded(
+                self._presplit_worker, presplit_dir, output_dir, model, language,
+            )
+            return
+
         try:
             max_chars = int(self._v_max_chars.get().strip())
         except ValueError:
@@ -304,8 +405,7 @@ class ForcedAlignApp:
             return
 
         formats = self._get_formats()
-        model = self._v_model.get().strip()
-        language = self._v_lang.get().strip()
+        asr_guided = self._asr_guided.get()
 
         if self._mode.get() == "batch":
             audio_dir = self._v_audio_dir.get().strip()
@@ -313,20 +413,32 @@ class ForcedAlignApp:
             if not audio_dir or not text_dir:
                 messagebox.showerror("输入错误", "请指定音频文件夹和文本文件夹。")
                 return
-            self._run_threaded(
-                self._batch_worker, audio_dir, text_dir, output_dir,
-                formats, max_chars, model, language,
-            )
+            if asr_guided:
+                self._run_threaded(
+                    self._batch_asr_guided_worker, audio_dir, text_dir, output_dir,
+                    formats, max_chars, model, asr_model, language,
+                )
+            else:
+                self._run_threaded(
+                    self._batch_worker, audio_dir, text_dir, output_dir,
+                    formats, max_chars, model, language,
+                )
         else:
             audio = self._v_audio.get().strip()
             text = self._v_text.get().strip()
             if not audio or not text:
                 messagebox.showerror("输入错误", "请指定音频文件和文本文件。")
                 return
-            self._run_threaded(
-                self._single_worker, audio, text, output_dir,
-                formats, max_chars, model, language,
-            )
+            if asr_guided:
+                self._run_threaded(
+                    self._single_asr_guided_worker, audio, text, output_dir,
+                    formats, max_chars, model, asr_model, language,
+                )
+            else:
+                self._run_threaded(
+                    self._single_worker, audio, text, output_dir,
+                    formats, max_chars, model, language,
+                )
 
     def _single_worker(
         self, audio: str, text: str, output_dir: str,
@@ -358,6 +470,96 @@ class ForcedAlignApp:
             audio_dir, text_dir, output_dir,
             formats=formats, srt_max_chars=max_chars,
         )
+
+    # ------------------------------------------------------------------
+    # ASR 引导对齐 workers
+    # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # 预切割合并 worker
+    # ------------------------------------------------------------------
+
+    def _presplit_worker(
+        self, folder: str, output_dir: str, model: str, language: str,
+    ) -> None:
+        aligner = ForcedAligner(
+            model_path=model, language=language, progress_callback=self._log,
+        )
+        r = aligner.align_presplit(folder, output_dir)
+        if r.success:
+            self._log(f"预切割合并完成! {len(r.words)} 个词")
+            if r.output_json:
+                self._log(f"  JSON: {r.output_json}")
+        else:
+            self._log(f"预切割合并失败: {r.error}")
+
+    # ------------------------------------------------------------------
+    # ASR 引导对齐 workers
+    # ------------------------------------------------------------------
+
+    def _single_asr_guided_worker(
+        self, audio: str, text: str, output_dir: str,
+        formats: tuple, max_chars: int, model: str, asr_model: str, language: str,
+    ) -> None:
+        aligner = ForcedAligner(
+            model_path=model, language=language, progress_callback=self._log,
+        )
+        r = aligner.align_with_asr(
+            audio, text, output_dir,
+            asr_model_path=asr_model, formats=formats, srt_max_chars=max_chars,
+        )
+        if r.success:
+            self._log(f"ASR 引导对齐完成! 输出 {len(r.words)} 个词级时间戳")
+            if r.output_json:
+                self._log(f"  JSON: {r.output_json}")
+            if r.output_srt:
+                self._log(f"  SRT:  {r.output_srt}")
+            if r.output_vtt:
+                self._log(f"  VTT:  {r.output_vtt}")
+        else:
+            self._log(f"ASR 引导对齐失败: {r.error}")
+
+    def _batch_asr_guided_worker(
+        self, audio_dir: str, text_dir: str, output_dir: str,
+        formats: tuple, max_chars: int, model: str, asr_model: str, language: str,
+    ) -> None:
+        aligner = ForcedAligner(
+            model_path=model, language=language, progress_callback=self._log,
+        )
+        aligner.batch_align_with_asr(
+            audio_dir, text_dir, output_dir,
+            asr_model_path=asr_model, formats=formats, srt_max_chars=max_chars,
+        )
+
+    # ------------------------------------------------------------------
+    # ASR 语音识别 workers (仅音频，无文本)
+    # ------------------------------------------------------------------
+
+    def _single_asr_worker(
+        self, audio: str, output_dir: str,
+        model: str, asr_model: str, language: str,
+    ) -> None:
+        aligner = ForcedAligner(
+            model_path=model, language=language, progress_callback=self._log,
+        )
+        r = aligner.transcribe_audio(audio, output_dir, asr_model_path=asr_model)
+        if r.success:
+            self._log(f"ASR 完成! 输出 {len(r.words)} 个词级时间戳")
+            if r.output_json:
+                self._log(f"  JSON: {r.output_json}")
+        else:
+            self._log(f"ASR 失败: {r.error}")
+
+    def _batch_asr_worker(
+        self, audio_dir: str, output_dir: str,
+        model: str, asr_model: str, language: str,
+    ) -> None:
+        aligner = ForcedAligner(
+            model_path=model, language=language, progress_callback=self._log,
+        )
+        results = aligner.batch_transcribe(audio_dir, output_dir, asr_model_path=asr_model)
+        ok = sum(1 for r in results if r.success)
+        self._log(f"批量 ASR 完成: {ok}/{len(results)} 成功")
 
 
 def main() -> None:

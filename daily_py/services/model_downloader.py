@@ -142,7 +142,7 @@ if __name__ == "__main__":
     #python -m daily_py.services.model_downloader Qwen/Qwen3-ForcedAligner-0.6B D:\my_models
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-    repo = sys.argv[1] if len(sys.argv) > 1 else "Qwen/Qwen3-ForcedAligner-0.6B"
+    repo = sys.argv[1] if len(sys.argv) > 1 else "Qwen/Qwen3-ASR-0.6B"
     base = sys.argv[2] if len(sys.argv) > 2 else _DEFAULT_BASE_DIR
 
     dl = ModelDownloader(base_dir=base)

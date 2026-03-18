@@ -1,0 +1,4 @@
+torch
+qwen-asr
+fastapi
+uvicorn[standard]

@@ -22,6 +22,7 @@ class Novel:
     cover_width: int = 0
     content: Optional[str] = None
     audio_url: str = ""
+    alignment_url: str = ""
     service_level_limits: int = 0
     click_count: int = 0
     deleted_flag: int = 1

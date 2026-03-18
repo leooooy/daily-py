@@ -8,6 +8,7 @@ CREATE TABLE `novel` (
     `cover_width` int NOT NULL DEFAULT '0' COMMENT '封面图片宽度，px',
     `content` longtext COMMENT '内容',
     `audio_url` varchar(255) NOT NULL DEFAULT '' COMMENT '音频地址',
+    `alignment_url` varchar(255) NOT NULL DEFAULT '' COMMENT '音频对齐JSON文件地址',
     `service_level_limits` tinyint NOT NULL DEFAULT '0' COMMENT '服务等级，数字越大限制级越高',
     `click_count` int NOT NULL DEFAULT '0' COMMENT '点击次数',
     `deleted_flag` tinyint NOT NULL DEFAULT '1' COMMENT '删除标记(1:正常 -1:已删除)',
